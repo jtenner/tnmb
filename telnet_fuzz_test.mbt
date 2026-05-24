@@ -3211,3 +3211,330 @@ test "parse encode stability fuzz covers generated arbitrary streams" {
     )
   }
 }
+
+///|
+struct FuzzSeedCorpusCase {
+  name : String
+  seed : Int
+  wire : Bytes
+  parse_encode_stable : Bool
+} derive(Debug)
+
+///|
+fn fuzz_seed_corpus_case(
+  name : String,
+  seed : Int,
+  wire : Bytes,
+  parse_encode_stable : Bool,
+) -> FuzzSeedCorpusCase {
+  FuzzSeedCorpusCase::{ name, seed, wire, parse_encode_stable }
+}
+
+///|
+fn fuzz_rfc_inspired_seed_corpus() -> Array[FuzzSeedCorpusCase] {
+  [
+    fuzz_seed_corpus_case(
+      "rfc854-data-hello",
+      15000,
+      fuzz_bytes_from_ints([72, 101, 108, 108, 111]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-escaped-iac-data",
+      15001,
+      fuzz_bytes_from_ints([65, 255, 255, 66]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-simple-command-nop-ga",
+      15002,
+      fuzz_bytes_from_ints([255, 241, 255, 249]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-simple-command-ip-ao-ayt",
+      15003,
+      fuzz_bytes_from_ints([255, 244, 255, 245, 255, 246]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-will-echo",
+      15004,
+      fuzz_bytes_from_ints([255, 251, 1]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-do-suppress-go-ahead",
+      15005,
+      fuzz_bytes_from_ints([255, 253, 3]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-wont-echo-dont-suppress-go-ahead",
+      15006,
+      fuzz_bytes_from_ints([255, 252, 1, 255, 254, 3]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-login-negotiation-command-mix",
+      15007,
+      fuzz_bytes_from_ints([
+        108, 111, 103, 105, 110, 58, 32, 255, 251, 1, 255, 253, 3, 255, 241,
+      ]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-incomplete-iac-tail",
+      15008,
+      fuzz_bytes_from_ints([255]),
+      false,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-incomplete-negotiation-tail",
+      15009,
+      fuzz_bytes_from_ints([255, 251]),
+      false,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc854-incomplete-subnegotiation-tail",
+      15010,
+      fuzz_bytes_from_ints([255, 250, 31, 0, 80]),
+      false,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc1073-naws-80x24",
+      15011,
+      fuzz_bytes_from_ints([255, 250, 31, 0, 80, 0, 24, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc1091-terminal-type-send",
+      15012,
+      fuzz_bytes_from_ints([255, 250, 24, 1, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc1091-terminal-type-is-vt100",
+      15013,
+      fuzz_bytes_from_ints([255, 250, 24, 0, 86, 84, 49, 48, 48, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc1572-new-environ-empty-is",
+      15014,
+      fuzz_bytes_from_ints([255, 250, 39, 0, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc2066-charset-request-utf8",
+      15015,
+      fuzz_bytes_from_ints([255, 250, 42, 1, 32, 85, 84, 70, 45, 56, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc1184-linemode-mode-edit-trapsig",
+      15016,
+      fuzz_bytes_from_ints([255, 250, 34, 1, 3, 255, 240]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "rfc2946-start-tls-do-will",
+      15017,
+      fuzz_bytes_from_ints([255, 253, 46, 255, 251, 46]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "private-option-negotiation-sample",
+      15018,
+      fuzz_bytes_from_ints([255, 251, 93, 255, 253, 93]),
+      true,
+    ),
+    fuzz_seed_corpus_case(
+      "strict-invalid-command-sample",
+      15019,
+      fuzz_bytes_from_ints([65, 255, 1, 66]),
+      false,
+    ),
+  ]
+}
+
+///|
+fn fuzz_seed_corpus_failure_prefix(
+  phase : String,
+  case : FuzzSeedCorpusCase,
+  config_index : Int,
+) -> String {
+  "seed corpus fuzz phase=" +
+  phase +
+  " name=" +
+  case.name +
+  " seed=" +
+  case.seed.to_string() +
+  " config_index=" +
+  config_index.to_string() +
+  " length=" +
+  case.wire.length().to_string() +
+  " wire=" +
+  fuzz_bytes_literal(case.wire)
+}
+
+///|
+fn fuzz_print_seed_corpus_observation_failure(
+  phase : String,
+  case : FuzzSeedCorpusCase,
+  config_index : Int,
+  expected : FuzzParseObservation,
+  observed : FuzzParseObservation,
+) -> Unit {
+  println(fuzz_seed_corpus_failure_prefix(phase, case, config_index))
+  println("expected " + fuzz_observation_summary(expected))
+  println("observed " + fuzz_observation_summary(observed))
+}
+
+///|
+fn fuzz_assert_seed_corpus_smoke(
+  case : FuzzSeedCorpusCase,
+  config : @telnet.ParserConfig,
+  config_index : Int,
+) -> Unit {
+  let fed = @telnet.Parser::new(config).feed(case.wire)
+  let fed_checkpoint = fed.parser.checkpoint()
+  let finished = fed.parser.finish()
+  let reset_checkpoint = finished.parser.checkpoint()
+  if fed.bytes_consumed != case.wire.length() ||
+    fed_checkpoint.absolute_offset != case.wire.length() ||
+    fed_checkpoint.buffered_data_length < 0 ||
+    fed_checkpoint.buffered_subnegotiation_length < 0 ||
+    fed.events.length() > case.wire.length() + 1 ||
+    finished.events.length() > 1 ||
+    reset_checkpoint.mode != @telnet.ParserMode::Normal ||
+    reset_checkpoint.absolute_offset != 0 ||
+    reset_checkpoint.buffered_data_length != 0 ||
+    reset_checkpoint.buffered_subnegotiation_length != 0 {
+    println(fuzz_seed_corpus_failure_prefix("smoke", case, config_index))
+    println(
+      "bytes_consumed=" +
+      fed.bytes_consumed.to_string() +
+      " fed_checkpoint_offset=" +
+      fed_checkpoint.absolute_offset.to_string() +
+      " fed_events=" +
+      fed.events.length().to_string() +
+      " finished_events=" +
+      finished.events.length().to_string() +
+      " reset_offset=" +
+      reset_checkpoint.absolute_offset.to_string(),
+    )
+    abort("seed corpus smoke invariant mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_seed_corpus_streaming(
+  case : FuzzSeedCorpusCase,
+  config : @telnet.ParserConfig,
+  config_index : Int,
+) -> Unit raise {
+  let whole = fuzz_observe_whole(config, case.wire)
+  let single = fuzz_observe_chunks(
+    config,
+    case.wire,
+    fuzz_one_byte_chunks(case.wire.length()),
+  )
+  if single != whole {
+    fuzz_print_seed_corpus_observation_failure(
+      "streaming-one-byte", case, config_index, whole, single,
+    )
+    println("chunks=one-byte-with-empty-feeds")
+    abort("seed corpus one-byte streaming mismatch")
+  }
+  for split = 0; split <= case.wire.length(); split = split + 1 {
+    let split_observed = fuzz_observe_chunks(config, case.wire, [
+      0,
+      split,
+      0,
+      case.wire.length() - split,
+      0,
+    ])
+    if split_observed != whole {
+      fuzz_print_seed_corpus_observation_failure(
+        "streaming-split", case, config_index, whole, split_observed,
+      )
+      println("split=" + split.to_string())
+      abort("seed corpus split streaming mismatch")
+    }
+  }
+  for pattern = 0; pattern < 3; pattern = pattern + 1 {
+    let chunk_seed = case.seed + pattern * 769
+    let chunked = fuzz_observe_chunks(
+      config,
+      case.wire,
+      fuzz_random_chunks(chunk_seed, case.wire.length()),
+    )
+    if chunked != whole {
+      fuzz_print_seed_corpus_observation_failure(
+        "streaming-random", case, config_index, whole, chunked,
+      )
+      println(
+        "pattern=" +
+        pattern.to_string() +
+        " chunk_seed=" +
+        chunk_seed.to_string(),
+      )
+      abort("seed corpus random streaming mismatch")
+    }
+  }
+}
+
+///|
+fn fuzz_assert_seed_corpus_parse_encode_stable(
+  case : FuzzSeedCorpusCase,
+) -> Unit raise {
+  let first = fuzz_observe_whole(fuzz_roundtrip_parser_config(), case.wire)
+  match fuzz_observation_to_encode_items(first) {
+    None =>
+      if case.parse_encode_stable {
+        println(
+          fuzz_seed_corpus_failure_prefix("parse-encode-unencodable", case, 0),
+        )
+        println("observed " + fuzz_observation_summary(first))
+        abort("seed corpus expected encodable stable case")
+      } else {
+        assert_true(!first.complete || fuzz_observation_has_error(first))
+      }
+    Some(items) => {
+      if !case.parse_encode_stable {
+        println(
+          fuzz_seed_corpus_failure_prefix("parse-encode-exclusion", case, 0),
+        )
+        println("observed " + fuzz_observation_summary(first))
+        abort("seed corpus unexpectedly encodable excluded case")
+      }
+      let canonical_wire = fuzz_encode_items_to_wire(items, case.seed)
+      let second = fuzz_observe_whole(
+        fuzz_roundtrip_parser_config(),
+        canonical_wire,
+      )
+      if !second.complete || second.events != first.events {
+        fuzz_print_seed_corpus_observation_failure(
+          "parse-encode-stability", case, 0, first, second,
+        )
+        println("canonical_wire=" + fuzz_bytes_literal(canonical_wire))
+        abort("seed corpus parse encode stability mismatch")
+      }
+    }
+  }
+}
+
+///|
+test "RFC-inspired seed corpus fuzz covers parser streaming and stability" {
+  let corpus = fuzz_rfc_inspired_seed_corpus()
+  assert_true(corpus.length() == 20)
+  for case in corpus {
+    for config_index = 0; config_index < 5; config_index = config_index + 1 {
+      let config = fuzz_parser_config(config_index)
+      fuzz_assert_seed_corpus_smoke(case, config, config_index)
+      fuzz_assert_seed_corpus_streaming(case, config, config_index)
+    }
+    fuzz_assert_seed_corpus_parse_encode_stable(case)
+  }
+}

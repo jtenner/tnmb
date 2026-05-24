@@ -17,38 +17,25 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 
 ## Latest completed slice
 
-- Completed slice 11, CR/LF/NUL text handling fuzz cases, on 2026-05-24.
-- Added deterministic newline fuzz helpers with a small independent no-IAC reference model for `Preserve`, `ValidateNvt`, and `NormalizeToLf` CR policies.
-- Added targeted and generated CR/LF/NUL-biased cases that compare expected normalized events across whole-buffer parsing, all representative split points, and one-byte feeds.
-- Added explicit command-boundary regression coverage for CR before/after TELNET IAC commands and documented current binary-mode assumptions in `docs/wiki/06-testing-compliance.md`.
+- Completed slice 12, RFC-inspired seed corpus, on 2026-05-24.
+- Added a named in-code seed corpus covering RFC 854 data/IAC/command/negotiation framing, common option subnegotiations from the documented verification corpus, malformed tails, START_TLS negotiation, and a private-option sample.
+- Each seed now runs through parser smoke invariants and streaming equivalence across all five fuzz parser configurations; parse/encode stability is checked for seeds marked as encodable, while malformed/excluded seeds assert the expected non-encodable path.
+- Seed-corpus failures print case name, seed, config index, wire length, byte array, and expected/observed normalized events where relevant.
 - No production parser bug was exposed in this slice.
-- Remaining follow-ups: continue with slice 12 (RFC-inspired seed corpus) and the still-active general failure-output refinement for older fuzz helpers.
+- Remaining follow-ups: continue with slice 13 (failure minimization workflow) and the still-active general failure-output refinement for older fuzz helpers.
 - Reproduction seeds/details:
-  - Targeted no-IAC wires: `[]`, `[13]`, `[10]`, `[0]`, `[13, 10]`, `[13, 0]`, `[13, 88]`, `[65, 13, 10, 66]`, `[65, 13, 0, 66]`, `[65, 13, 88, 13, 10, 0]`, `[13, 13, 10, 13, 0, 10]`, and `[0, 13, 0, 10, 13, 90]` under all three CR policies.
-  - Generated no-IAC CR/LF/NUL-biased wires use seeds `14100 + policy_index * 257 + iteration`, policy indexes `0..2`, iterations `0..23`, and lengths `(iteration * 7 + policy_index * 3) % 37`.
-  - Preserve/binary-like mixed-data seed `14200` uses `[0, 13, 10, 128, 254, 13, 0, 42]`.
-  - Command-boundary seeds `14300..14303` use `[13, 255, 241, 10]` and `[255, 241, 13, 10, 65]`.
+  - Named seed corpus `fuzz_rfc_inspired_seed_corpus()` has seeds `15000..15019`.
+  - Encodable/stability seeds: `15000` data `Hello`; `15001` escaped IAC data; `15002..15003` simple commands; `15004..15007` common negotiation/mixed streams; `15011` NAWS 80x24; `15012..15013` TERMINAL-TYPE SEND/IS; `15014` NEW-ENVIRON empty IS; `15015` CHARSET UTF-8 request; `15016` LINEMODE mode sample; `15017` START_TLS DO/WILL; `15018` private option 93 negotiation.
+  - Excluded malformed/non-encodable seeds: `15008` incomplete IAC, `15009` incomplete negotiation, `15010` incomplete subnegotiation, and `15019` strict invalid-command sample.
 - Commands run:
-  - `git status --short && git log --oneline -5`
-  - `find '*fuzz*'`
-  - `moon info && moon fmt && moon test` before implementation: 865 passed
-  - `moon info && moon fmt && moon test` after implementation: 869 passed
-  - `git status --short && git diff --stat`
-  - `git diff -- telnet_fuzz_test.mbt docs/wiki/06-testing-compliance.md agent-todo.md | sed -n '1,260p'`
-  - `moon info && moon fmt && moon test && git diff --check && git status --short` final verification: 869 passed; working tree contained only this run's three modified files (run twice after implementation/TODO updates; both passed)
+  - `git status --short && echo '--- recent commits ---' && git log --oneline -5`
+  - `moon info && moon fmt && moon test` before implementation: 869 passed
+  - `moon info && moon fmt && moon test` after implementation: 870 passed
+  - `git status --short && git diff --stat && git diff -- telnet_fuzz_test.mbt agent-todo.md | sed -n '1,280p'`
+  - `git diff -- pkg.generated.mbti`
+  - `moon info && moon fmt && moon test && git diff --check && git status --short` final verification: 870 passed; working tree contained only `agent-todo.md` and `telnet_fuzz_test.mbt`
 
 ## Active work slices
-
-### 12. Add seed corpus from RFC-inspired examples
-
-- Collect small TELNET byte sequences from project wiki/spec tests and RFC-derived examples already cited in docs.
-- Store seeds in code or a small test fixture format, whichever is idiomatic for the repo.
-- Ensure every seed runs through no-panic, streaming equivalence, and round-trip checks where applicable.
-
-Acceptance criteria:
-
-- Named seed corpus exists.
-- Seeds are easy to extend when bugs are found.
 
 ### 13. Failure minimization workflow
 
