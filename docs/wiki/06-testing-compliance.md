@@ -27,6 +27,29 @@ CR, LF, NUL, and other mixed data bytes are preserved as data unless TELNET IAC
 framing is present. NVT CR validation and LF normalization are opt-in parser
 configurations covered by separate fuzz cases.
 
+### Reproducing fuzz failures
+
+Fuzz failures should print a compact reproduction line with the deterministic
+seed and a `bytes([...])` wire literal. For generated cases, also capture the
+iteration/case name from the failing test. Parser failures should include the
+parser configuration, whether the mismatch came from whole-buffer parsing or a
+chunked run, the chunk sizes or chunk seed when applicable, and the normalized
+expected/observed events.
+
+To promote a failure into a regression test:
+
+1. Copy the printed `wire=bytes([...])` value into a named `fuzz_bytes_from_ints`
+   or `bytes` fixture.
+2. Preserve the reported seed and iteration in the test name, assertion message,
+   or an adjacent comment.
+3. Add the smallest deterministic assertion that reproduces the bug, usually a
+   parser observation, streaming-equivalence, or parse/encode-stability check.
+4. Fix the bug or document the remaining limitation, then keep the reduced test
+   in the normal fast `moon test` suite.
+
+Longer exploratory fuzzing should stay behind a separate command or explicit
+configuration so the default test suite remains deterministic and quick.
+
 ## Minimum completion criteria for each option
 
 - Source RFC linked in `04-options-catalog.md`.

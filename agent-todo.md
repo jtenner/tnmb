@@ -11,42 +11,28 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 - Keep entries concise, actionable, and independently reviewable.
 - If a fuzz case exposes a bug, reduce it into a named regression test and keep any long-term follow-up here only if work remains.
 
-## Active refinements
-
-- Failure output should include enough detail to reproduce a case: PRNG seed, iteration, generated length, byte array, parser config, whether the case was whole-buffer or chunked, encoded wire bytes when relevant, and expected/observed normalized events when practical.
-
 ## Latest completed slice
 
-- Completed slice 12, RFC-inspired seed corpus, on 2026-05-24.
-- Added a named in-code seed corpus covering RFC 854 data/IAC/command/negotiation framing, common option subnegotiations from the documented verification corpus, malformed tails, START_TLS negotiation, and a private-option sample.
-- Each seed now runs through parser smoke invariants and streaming equivalence across all five fuzz parser configurations; parse/encode stability is checked for seeds marked as encodable, while malformed/excluded seeds assert the expected non-encodable path.
-- Seed-corpus failures print case name, seed, config index, wire length, byte array, and expected/observed normalized events where relevant.
+- Completed slice 13, failure minimization workflow, on 2026-05-24.
+- Added `docs/wiki/06-testing-compliance.md` reproduction guidance for copying printed seed/wire details into named regression tests.
+- Added a regression-ready byte-literal helper check so failures can print `wire=bytes([...])` snippets.
+- Improved streaming-equivalence, encoder/parser roundtrip, and parse/encode-stability failure output with seed, wire bytes, parser config, chunk sizes or chunk seed where relevant, and expected/observed normalized events.
 - No production parser bug was exposed in this slice.
-- Remaining follow-ups: continue with slice 13 (failure minimization workflow) and the still-active general failure-output refinement for older fuzz helpers.
+- Remaining follow-ups: continue with slice 14 (separate long-running fuzz command/package). Slice 19 should still add comprehensive fuzz documentation for properties, fast/long commands, and seed-corpus maintenance; the failure-reproduction subsection is now started in `06-testing-compliance.md`.
 - Reproduction seeds/details:
-  - Named seed corpus `fuzz_rfc_inspired_seed_corpus()` has seeds `15000..15019`.
-  - Encodable/stability seeds: `15000` data `Hello`; `15001` escaped IAC data; `15002..15003` simple commands; `15004..15007` common negotiation/mixed streams; `15011` NAWS 80x24; `15012..15013` TERMINAL-TYPE SEND/IS; `15014` NEW-ENVIRON empty IS; `15015` CHARSET UTF-8 request; `15016` LINEMODE mode sample; `15017` START_TLS DO/WILL; `15018` private option 93 negotiation.
-  - Excluded malformed/non-encodable seeds: `15008` incomplete IAC, `15009` incomplete negotiation, `15010` incomplete subnegotiation, and `15019` strict invalid-command sample.
+  - No new fuzz failure seed was discovered.
+  - New helper coverage uses `fuzz_bytes_literal(fuzz_bytes_from_ints([0, 13, 255]))` as a deterministic formatting regression.
+  - Improved failure lines use `fuzz_reproduction_line(seed, input)` and report canonical wire bytes for parse/encode stability mismatches.
 - Commands run:
-  - `git status --short && echo '--- recent commits ---' && git log --oneline -5`
-  - `moon info && moon fmt && moon test` before implementation: 869 passed
-  - `moon info && moon fmt && moon test` after implementation: 870 passed
-  - `git status --short && git diff --stat && git diff -- telnet_fuzz_test.mbt agent-todo.md | sed -n '1,280p'`
-  - `git diff -- pkg.generated.mbti`
-  - `moon info && moon fmt && moon test && git diff --check && git status --short` final verification: 870 passed; working tree contained only `agent-todo.md` and `telnet_fuzz_test.mbt`
+  - `git status --short && echo '--- recent commits ---' && git log --oneline -8`
+  - `moon info && moon fmt && moon test` before implementation: 870 passed
+  - `moon info && moon fmt && moon test` after implementation before warning cleanup: 871 passed with one unused-error-type warning
+  - `moon info && moon fmt && moon test` after warning cleanup: 871 passed
+  - `git status --short && git diff -- pkg.generated.mbti && git diff --stat`
+  - `git diff --check`
+  - `moon info && moon fmt && moon test && git diff --check && git status --short` final verification: 871 passed; working tree contained only `agent-todo.md`, `docs/wiki/06-testing-compliance.md`, and `telnet_fuzz_test.mbt`
 
 ## Active work slices
-
-### 13. Failure minimization workflow
-
-- Add a developer note describing how to reproduce a fuzz failure by seed, iteration, and input bytes.
-- Make fuzz tests print or snapshot enough data to reproduce failures without overwhelming normal output.
-- Consider a tiny helper that formats failing bytes as MoonBit array literals.
-
-Acceptance criteria:
-
-- A failed fuzz assertion points to a seed and minimal reproduction path.
-- Documentation explains how to promote a failure into a regression test.
 
 ### 14. Separate long-running fuzz command/package
 
@@ -112,7 +98,7 @@ Acceptance criteria:
   - what properties are tested
   - how to run fast fuzz tests
   - how to run long fuzz tests
-  - how to reproduce failures
+  - how to reproduce failures (build on the slice 13 note now in `06-testing-compliance.md`)
   - how to add new seeds/regressions
 - Link to relevant TELNET protocol docs already used by the wiki.
 

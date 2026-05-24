@@ -441,6 +441,38 @@ fn fuzz_observation_summary(observation : FuzzParseObservation) -> String {
 }
 
 ///|
+fn fuzz_parser_config_summary(config : @telnet.ParserConfig) -> String {
+  "ParserConfig(max_data_chunk_bytes=" +
+  config.max_data_chunk_bytes.to_string() +
+  ", max_subnegotiation_bytes=" +
+  config.max_subnegotiation_bytes.to_string() +
+  ", cr_policy=" +
+  fuzz_cr_policy_name(config.cr_policy) +
+  ", data_coalescing=" +
+  fuzz_data_coalescing_name(config.data_coalescing) +
+  ", strict_commands=" +
+  config.strict_commands.to_string() +
+  ")"
+}
+
+///|
+fn fuzz_reproduction_line(seed : Int, input : Bytes) -> String {
+  "reproduce seed=" +
+  seed.to_string() +
+  " wire=bytes(" +
+  fuzz_bytes_literal(input) +
+  ")"
+}
+
+///|
+test "fuzz failure byte literal helper formats regression-ready input" {
+  assert_true(fuzz_bytes_literal(Bytes::new(0)) == "[]")
+  assert_true(
+    fuzz_bytes_literal(fuzz_bytes_from_ints([0, 13, 255])) == "[0, 13, 255]",
+  )
+}
+
+///|
 fn fuzz_concat_bytes(left : Bytes, right : Bytes) -> Bytes {
   Bytes::from_array(left.to_array() + right.to_array())
 }
@@ -1093,44 +1125,54 @@ test "command catalog fuzz covers subnegotiation option bytes" {
 }
 
 ///|
+fn fuzz_print_streaming_mismatch(
+  phase : String,
+  seed : Int,
+  input : Bytes,
+  config : @telnet.ParserConfig,
+  chunks : Array[Int],
+  whole : FuzzParseObservation,
+  chunked : FuzzParseObservation,
+) -> Unit {
+  println(
+    "streaming fuzz phase=" + phase + " " + fuzz_reproduction_line(seed, input),
+  )
+  println("length=" + input.length().to_string())
+  println("config=" + fuzz_parser_config_summary(config))
+  println("chunks=" + fuzz_int_array_literal(chunks))
+  println("whole " + fuzz_observation_summary(whole))
+  println("chunked " + fuzz_observation_summary(chunked))
+}
+
+///|
 fn fuzz_assert_streaming_equivalent(
   config : @telnet.ParserConfig,
   input : Bytes,
   seed : Int,
 ) -> Unit raise {
   let whole = fuzz_observe_whole(config, input)
-  let single = fuzz_observe_chunks(
-    config,
-    input,
-    fuzz_one_byte_chunks(input.length()),
-  )
+  let one_byte_chunks = fuzz_one_byte_chunks(input.length())
+  let single = fuzz_observe_chunks(config, input, one_byte_chunks)
   if single != whole {
-    println(
-      "streaming single-byte mismatch seed=" +
-      seed.to_string() +
-      " length=" +
-      input.length().to_string(),
+    fuzz_print_streaming_mismatch(
+      "one-byte-with-empty-feeds", seed, input, config, one_byte_chunks, whole, single,
     )
     abort("streaming single-byte mismatch")
   }
 
   if input.length() <= 16 {
     for split = 0; split <= input.length(); split = split + 1 {
-      let split_observed = fuzz_observe_chunks(config, input, [
-        0,
-        split,
-        0,
-        input.length() - split,
-        0,
-      ])
+      let split_chunks = [0, split, 0, input.length() - split, 0]
+      let split_observed = fuzz_observe_chunks(config, input, split_chunks)
       if split_observed != whole {
-        println(
-          "streaming split mismatch seed=" +
-          seed.to_string() +
-          " length=" +
-          input.length().to_string() +
-          " split=" +
-          split.to_string(),
+        fuzz_print_streaming_mismatch(
+          "split-" + split.to_string(),
+          seed,
+          input,
+          config,
+          split_chunks,
+          whole,
+          split_observed,
         )
         abort("streaming split mismatch")
       }
@@ -1138,19 +1180,21 @@ fn fuzz_assert_streaming_equivalent(
   }
 
   for pattern = 0; pattern < 3; pattern = pattern + 1 {
-    let chunked = fuzz_observe_chunks(
-      config,
-      input,
-      fuzz_random_chunks(seed + pattern * 655, input.length()),
-    )
+    let chunk_seed = seed + pattern * 655
+    let random_chunks = fuzz_random_chunks(chunk_seed, input.length())
+    let chunked = fuzz_observe_chunks(config, input, random_chunks)
     if chunked != whole {
-      println(
-        "streaming random mismatch seed=" +
-        seed.to_string() +
-        " length=" +
-        input.length().to_string() +
-        " pattern=" +
-        pattern.to_string(),
+      fuzz_print_streaming_mismatch(
+        "random-pattern-" +
+        pattern.to_string() +
+        " chunk_seed=" +
+        chunk_seed.to_string(),
+        seed,
+        input,
+        config,
+        random_chunks,
+        whole,
+        chunked,
       )
       abort("streaming random mismatch")
     }
@@ -1823,14 +1867,13 @@ fn fuzz_assert_encode_parse_roundtrip(
     fuzz_push_expected_roundtrip_event(expected, item)
   })
   let wire = Bytes::from_array(wire_parts)
-  let observed = fuzz_observe_whole(fuzz_roundtrip_parser_config(), wire)
+  let config = fuzz_roundtrip_parser_config()
+  let observed = fuzz_observe_whole(config, wire)
   if !observed.complete || observed.events != expected {
-    println(
-      "encode roundtrip mismatch seed=" +
-      seed.to_string() +
-      " wire_length=" +
-      wire.length().to_string(),
-    )
+    println("encode roundtrip mismatch " + fuzz_reproduction_line(seed, wire))
+    println("config=" + fuzz_parser_config_summary(config))
+    println("expected " + fuzz_observed_events_summary(expected))
+    println("observed " + fuzz_observation_summary(observed))
     abort("encode roundtrip mismatch")
   }
 }
@@ -1988,21 +2031,31 @@ fn fuzz_encode_items_to_wire(
 
 ///|
 fn fuzz_assert_parse_encode_stable(input : Bytes, seed : Int) -> Unit raise {
-  let first = fuzz_observe_whole(fuzz_roundtrip_parser_config(), input)
+  let config = fuzz_roundtrip_parser_config()
+  let first = fuzz_observe_whole(config, input)
   match fuzz_observation_to_encode_items(first) {
-    None => assert_true(!first.complete || fuzz_observation_has_error(first))
+    None =>
+      if first.complete && !fuzz_observation_has_error(first) {
+        println(
+          "parse encode stability unencodable without error " +
+          fuzz_reproduction_line(seed, input),
+        )
+        println("config=" + fuzz_parser_config_summary(config))
+        println("observed " + fuzz_observation_summary(first))
+        abort("parse encode stability unexpected unencodable case")
+      }
     Some(items) => {
       let wire = fuzz_encode_items_to_wire(items, seed)
-      let second = fuzz_observe_whole(fuzz_roundtrip_parser_config(), wire)
+      let second = fuzz_observe_whole(config, wire)
       if !second.complete || second.events != first.events {
         println(
-          "parse encode stability mismatch seed=" +
-          seed.to_string() +
-          " input_length=" +
-          input.length().to_string() +
-          " canonical_wire_length=" +
-          wire.length().to_string(),
+          "parse encode stability mismatch " +
+          fuzz_reproduction_line(seed, input),
         )
+        println("config=" + fuzz_parser_config_summary(config))
+        println("canonical_wire=bytes(" + fuzz_bytes_literal(wire) + ")")
+        println("expected " + fuzz_observation_summary(first))
+        println("observed " + fuzz_observation_summary(second))
         abort("parse encode stability mismatch")
       }
     }
@@ -2010,18 +2063,27 @@ fn fuzz_assert_parse_encode_stable(input : Bytes, seed : Int) -> Unit raise {
 }
 
 ///|
-fn fuzz_assert_parse_encode_excluded(input : Bytes, seed : Int) -> Unit raise {
-  let observed = fuzz_observe_whole(fuzz_roundtrip_parser_config(), input)
+fn fuzz_assert_parse_encode_excluded(input : Bytes, seed : Int) -> Unit {
+  let config = fuzz_roundtrip_parser_config()
+  let observed = fuzz_observe_whole(config, input)
   match fuzz_observation_to_encode_items(observed) {
     None =>
-      assert_true(!observed.complete || fuzz_observation_has_error(observed))
+      if observed.complete && !fuzz_observation_has_error(observed) {
+        println(
+          "parse encode exclusion unencodable without error " +
+          fuzz_reproduction_line(seed, input),
+        )
+        println("config=" + fuzz_parser_config_summary(config))
+        println("observed " + fuzz_observation_summary(observed))
+        abort("parse encode exclusion unexpected unencodable case")
+      }
     Some(_) => {
       println(
-        "parse encode exclusion unexpectedly encodable seed=" +
-        seed.to_string() +
-        " input_length=" +
-        input.length().to_string(),
+        "parse encode exclusion unexpectedly encodable " +
+        fuzz_reproduction_line(seed, input),
       )
+      println("config=" + fuzz_parser_config_summary(config))
+      println("observed " + fuzz_observation_summary(observed))
       abort("parse encode exclusion unexpectedly encodable")
     }
   }
