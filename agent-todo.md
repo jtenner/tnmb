@@ -17,41 +17,29 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 
 ## Latest completed slice
 
-- Completed slice 8, subnegotiation fuzzer, on 2026-05-24.
-- Added deterministic valid `IAC SB <option> <payload> IAC SE` coverage using canonical encoder output, random option bytes, payloads biased around TELNET command bytes, escaped `IAC`, empty payloads, and unknown option `255`.
-- Added malformed coverage for missing option, missing `SE`, embedded commands, nested `SB` markers, generated malformed frames, and oversized payload discard/resume behavior.
-- Added subnegotiation assertion helpers that print case name, seed, length, `max_subnegotiation_bytes`, wire bytes, chunk pattern, and expected/observed normalized events for regression promotion.
-- No parser or encoder bugs were discovered, so no reduced regression fixes or wiki ambiguity notes were needed.
-- Remaining follow-ups: continue with slice 9 (negotiation command sequence fuzzer) and the still-active general failure-output refinement for older non-subnegotiation fuzz helpers.
+- Completed slice 9, negotiation command sequence fuzzer, on 2026-05-24.
+- Added deterministic generated negotiator coverage for incoming `WILL`, `WONT`, `DO`, and `DONT` command sequences over known, unknown, and arbitrary option bytes.
+- Added interleaved local `request()` and peer `receive()` fuzz coverage to exercise duplicate and opposite queued request paths.
+- Asserted negotiator invariants: no panic, at most two actions per transition, action option scope does not drift, `apply`/`state_for` reflects the latest transition, and generated state storage keeps one state per option.
+- Added failure diagnostics with case name, PRNG seed, iteration, sequence length, step, operation, encoded negotiation wire bytes, transition details, and observed states where relevant.
+- No negotiator bugs were discovered, so no reduced regression fixes or wiki ambiguity notes were needed.
+- Remaining follow-ups: continue with slice 10 (unknown option and command catalog coverage) and the still-active general failure-output refinement for older fuzz helpers.
 - Reproduction seeds/details:
-  - Valid targeted frames: `12000` empty TERMINAL-TYPE payload, `12001` payload `[1, 255, 240, 255, 2]`, `12002` unknown option `255` with payload `[255, 0, 13, 10]`.
-  - Generated valid frames: `12100..12119`; each uses a generated option and payload and verifies all two-part splits plus one-byte chunks.
-  - Malformed named frames: `12200` missing option after `SB`, `12201` missing `SE`, `12202` missing `SE` after escaped `IAC`, `12203` embedded `IAC NOP`, `12204` nested `IAC SB`, `12205` oversized payload with `max_subnegotiation_bytes = 3` followed by normal data resume.
-  - Generated malformed frames: `12300..12319`; each verifies smoke/no-panic behavior plus one-byte and random chunk equivalence.
+  - Incoming generated sequences: seeds `13000..13031`; sequence lengths `1 + iteration * 5 % 41`.
+  - Interleaved generated request/receive sequences: seeds `13100..13123`; sequence lengths `2 + iteration * 7 % 37`.
 - Commands run:
   - `git status --short && git log --oneline -5`
   - `find '*fuzz*'`
-  - `moon info && moon fmt && moon test` before implementation: 856 passed
-  - `moon info && moon fmt && moon test` after implementation: 858 passed
+  - `moon info && moon fmt && moon test` before implementation: 858 passed
+  - `moon info && moon fmt && moon test` during implementation: compile failed on duplicate helper name and missing string-format helpers; fixed in the same task
+  - `moon info && moon fmt && moon test` after implementation: 860 passed
   - `git status --short && git diff --stat`
   - `git diff -- pkg.generated.mbti`
-  - `git diff -- telnet_fuzz_test.mbt | sed -n '1,320p'`
-  - `git diff -- telnet_fuzz_test.mbt | sed -n '321,720p' && git diff -- agent-todo.md`
-  - `moon info && moon fmt && moon test` final verification after TODO update: 858 passed
+  - `git diff -- telnet_fuzz_test.mbt | sed -n '1,260p'`
+  - `git diff -- agent-todo.md`
+  - `moon info && moon fmt && moon test` final verification after TODO updates: 860 passed (run three times after implementation; all passed)
 
 ## Active work slices
-
-### 9. Negotiation command sequence fuzzer
-
-- Generate random sequences of `DO`, `DONT`, `WILL`, and `WONT` with known and unknown option codes.
-- Feed them through any negotiator/state machine APIs.
-- Assert no panic, bounded output, and no impossible final state such as simultaneously enabled and disabled in the same direction if the model represents those states.
-- Check loop-prevention behavior where applicable.
-
-Acceptance criteria:
-
-- Negotiator fuzz/property test exists.
-- Invariants are documented and asserted.
 
 ### 10. Unknown option and command catalog coverage
 

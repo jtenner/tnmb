@@ -1757,6 +1757,478 @@ test "subnegotiation fuzz covers malformed frames and oversized discard" {
 }
 
 ///|
+fn fuzz_policy_decision(choice : Int) -> @telnet.PolicyDecision {
+  match choice % 3 {
+    0 => @telnet.PolicyDecision::Accept
+    1 => @telnet.PolicyDecision::Reject
+    _ => @telnet.PolicyDecision::Ignore
+  }
+}
+
+///|
+fn fuzz_known_option_byte(choice : Int) -> Byte {
+  let known = [0, 1, 3, 24, 31, 34, 39, 42, 46, 255]
+  byte(known[choice % known.length()])
+}
+
+///|
+fn fuzz_unknown_option_byte(choice : Int) -> Byte {
+  let unknown = [7, 23, 41, 47, 50, 91, 137, 200, 254]
+  byte(unknown[choice % unknown.length()])
+}
+
+///|
+fn fuzz_negotiation_option(choice : Int, fallback : Byte) -> @telnet.OptionCode {
+  let option = match choice % 4 {
+    0 | 1 => fuzz_known_option_byte(choice / 4)
+    2 => fuzz_unknown_option_byte(choice / 4)
+    _ => fallback
+  }
+  @telnet.OptionCode::{ value: option }
+}
+
+///|
+fn fuzz_generated_negotiation_event(
+  rng : FuzzRng,
+) -> (FuzzRng, @telnet.NegotiationEvent) {
+  let (r1, verb_choice) = rng.bounded_int(4)
+  let (r2, option_choice) = r1.bounded_int(64)
+  let (r3, fallback) = r2.byte()
+  (
+    r3,
+    @telnet.NegotiationEvent::{
+      verb: fuzz_negotiation_verb(verb_choice),
+      option: fuzz_negotiation_option(option_choice, fallback),
+    },
+  )
+}
+
+///|
+fn fuzz_generated_policy_decision(
+  rng : FuzzRng,
+) -> (FuzzRng, @telnet.PolicyDecision) {
+  let (next, choice) = rng.bounded_int(3)
+  (next, fuzz_policy_decision(choice))
+}
+
+///|
+fn fuzz_generated_option_side(rng : FuzzRng) -> (FuzzRng, @telnet.OptionSide) {
+  let (next, choice) = rng.bounded_int(2)
+  (
+    next,
+    if choice == 0 {
+      @telnet.OptionSide::Local
+    } else {
+      @telnet.OptionSide::Remote
+    },
+  )
+}
+
+///|
+fn fuzz_negotiation_event_wire(event : @telnet.NegotiationEvent) -> Bytes {
+  fuzz_bytes_from_ints([
+    255,
+    event.verb.to_command().to_byte().to_int(),
+    event.option.value.to_int(),
+  ])
+}
+
+///|
+fn fuzz_policy_decision_name(decision : @telnet.PolicyDecision) -> String {
+  match decision {
+    @telnet.PolicyDecision::Accept => "Accept"
+    @telnet.PolicyDecision::Reject => "Reject"
+    @telnet.PolicyDecision::Ignore => "Ignore"
+  }
+}
+
+///|
+fn fuzz_option_side_name(side : @telnet.OptionSide) -> String {
+  match side {
+    @telnet.OptionSide::Local => "Local"
+    @telnet.OptionSide::Remote => "Remote"
+  }
+}
+
+///|
+fn fuzz_queue_bit_summary(bit : @telnet.QueueBit) -> String {
+  match bit {
+    @telnet.QueueBit::Empty => "Empty"
+    @telnet.QueueBit::Opposite => "Opposite"
+  }
+}
+
+///|
+fn fuzz_half_state_summary(state : @telnet.HalfState) -> String {
+  match state {
+    @telnet.HalfState::No => "No"
+    @telnet.HalfState::Yes => "Yes"
+    @telnet.HalfState::WantNo(bit) =>
+      "WantNo(" + fuzz_queue_bit_summary(bit) + ")"
+    @telnet.HalfState::WantYes(bit) =>
+      "WantYes(" + fuzz_queue_bit_summary(bit) + ")"
+  }
+}
+
+///|
+fn fuzz_option_code_summary(code : @telnet.OptionCode) -> String {
+  code.value.to_int().to_string()
+}
+
+///|
+fn fuzz_option_state_summary(state : @telnet.OptionState) -> String {
+  "OptionState(option=" +
+  fuzz_option_code_summary(state.option) +
+  ", local=" +
+  fuzz_half_state_summary(state.local_state) +
+  ", remote=" +
+  fuzz_half_state_summary(state.remote_state) +
+  ")"
+}
+
+///|
+fn fuzz_negotiation_event_summary(event : @telnet.NegotiationEvent) -> String {
+  fuzz_negotiation_verb_name(event.verb) +
+  " " +
+  fuzz_option_code_summary(event.option)
+}
+
+///|
+fn fuzz_negotiation_action_summary(
+  action : @telnet.NegotiationAction,
+) -> String {
+  match action {
+    @telnet.NegotiationAction::Send(event) =>
+      "Send(" + fuzz_negotiation_event_summary(event) + ")"
+    @telnet.NegotiationAction::MarkEnabled(side, option) =>
+      "MarkEnabled(" +
+      fuzz_option_side_name(side) +
+      ", " +
+      fuzz_option_code_summary(option) +
+      ")"
+    @telnet.NegotiationAction::MarkDisabled(side, option) =>
+      "MarkDisabled(" +
+      fuzz_option_side_name(side) +
+      ", " +
+      fuzz_option_code_summary(option) +
+      ")"
+    @telnet.NegotiationAction::NotifyApplication(state) =>
+      "NotifyApplication(" + fuzz_option_state_summary(state) + ")"
+    @telnet.NegotiationAction::NoAction => "NoAction"
+  }
+}
+
+///|
+fn fuzz_negotiation_actions_summary(
+  actions : Array[@telnet.NegotiationAction],
+) -> String {
+  let mut out = "["
+  for i = 0; i < actions.length(); i = i + 1 {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + fuzz_negotiation_action_summary(actions[i])
+  }
+  out + "]"
+}
+
+///|
+fn fuzz_negotiation_transition_summary(
+  transition : @telnet.NegotiationTransition,
+) -> String {
+  "Transition(before=" +
+  fuzz_option_state_summary(transition.before) +
+  ", input=" +
+  fuzz_negotiation_event_summary(transition.input) +
+  ", decision=" +
+  fuzz_policy_decision_name(transition.decision) +
+  ", after=" +
+  fuzz_option_state_summary(transition.after) +
+  ", actions=" +
+  fuzz_negotiation_actions_summary(transition.actions) +
+  ")"
+}
+
+///|
+fn fuzz_option_states_summary(states : Array[@telnet.OptionState]) -> String {
+  let mut out = "["
+  for i = 0; i < states.length(); i = i + 1 {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + fuzz_option_state_summary(states[i])
+  }
+  out + "]"
+}
+
+///|
+fn fuzz_negotiation_failure_prefix(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+) -> String {
+  "negotiator fuzz case=" +
+  case_name +
+  " seed=" +
+  seed.to_string() +
+  " iteration=" +
+  iteration.to_string() +
+  " sequence_length=" +
+  sequence_length.to_string() +
+  " step=" +
+  step.to_string()
+}
+
+///|
+fn fuzz_print_negotiation_failure(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+  operation : String,
+  transition : @telnet.NegotiationTransition,
+) -> Unit {
+  println(
+    fuzz_negotiation_failure_prefix(
+      case_name, seed, iteration, sequence_length, step,
+    ),
+  )
+  println("operation=" + operation)
+  println(
+    "wire=" + fuzz_bytes_literal(fuzz_negotiation_event_wire(transition.input)),
+  )
+  println("transition=" + fuzz_negotiation_transition_summary(transition))
+}
+
+///|
+fn fuzz_assert_negotiation_actions_bounded(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+  operation : String,
+  transition : @telnet.NegotiationTransition,
+) -> Unit {
+  if transition.actions.length() > 2 {
+    fuzz_print_negotiation_failure(
+      case_name, seed, iteration, sequence_length, step, operation, transition,
+    )
+    abort("negotiator fuzz action amplification")
+  }
+  for action in transition.actions {
+    match action {
+      @telnet.NegotiationAction::Send(event) =>
+        if event.option != transition.input.option {
+          fuzz_print_negotiation_failure(
+            case_name, seed, iteration, sequence_length, step, operation, transition,
+          )
+          println("send_action=" + fuzz_negotiation_event_summary(event))
+          abort("negotiator fuzz send option drift")
+        }
+      @telnet.NegotiationAction::MarkEnabled(_, option)
+      | @telnet.NegotiationAction::MarkDisabled(_, option) =>
+        if option != transition.input.option {
+          fuzz_print_negotiation_failure(
+            case_name, seed, iteration, sequence_length, step, operation, transition,
+          )
+          println("mark_option=" + fuzz_option_code_summary(option))
+          abort("negotiator fuzz mark option drift")
+        }
+      @telnet.NegotiationAction::NotifyApplication(state) =>
+        if state.option != transition.input.option {
+          fuzz_print_negotiation_failure(
+            case_name, seed, iteration, sequence_length, step, operation, transition,
+          )
+          println("notify_state=" + fuzz_option_state_summary(state))
+          abort("negotiator fuzz notify option drift")
+        }
+      @telnet.NegotiationAction::NoAction => ()
+    }
+  }
+}
+
+///|
+fn fuzz_assert_negotiator_state_lookup(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+  operation : String,
+  negotiator : @telnet.Negotiator,
+  transition : @telnet.NegotiationTransition,
+) -> Unit {
+  let observed = negotiator.state_for(transition.after.option)
+  if observed != transition.after {
+    fuzz_print_negotiation_failure(
+      case_name, seed, iteration, sequence_length, step, operation, transition,
+    )
+    println("observed_state=" + fuzz_option_state_summary(observed))
+    abort("negotiator fuzz state lookup mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_negotiator_unique_states(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+  operation : String,
+  negotiator : @telnet.Negotiator,
+  transition : @telnet.NegotiationTransition,
+) -> Unit {
+  for i = 0; i < negotiator.states.length(); i = i + 1 {
+    for j = i + 1; j < negotiator.states.length(); j = j + 1 {
+      if negotiator.states[i].option == negotiator.states[j].option {
+        fuzz_print_negotiation_failure(
+          case_name, seed, iteration, sequence_length, step, operation, transition,
+        )
+        println("states=" + fuzz_option_states_summary(negotiator.states))
+        abort("negotiator fuzz duplicate option states")
+      }
+    }
+  }
+}
+
+///|
+fn fuzz_apply_and_assert_negotiator_transition(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+  step : Int,
+  operation : String,
+  negotiator : @telnet.Negotiator,
+  transition : @telnet.NegotiationTransition,
+) -> @telnet.Negotiator {
+  fuzz_assert_negotiation_actions_bounded(
+    case_name, seed, iteration, sequence_length, step, operation, transition,
+  )
+  let next = negotiator.apply(transition)
+  fuzz_assert_negotiator_state_lookup(
+    case_name, seed, iteration, sequence_length, step, operation, next, transition,
+  )
+  fuzz_assert_negotiator_unique_states(
+    case_name, seed, iteration, sequence_length, step, operation, next, transition,
+  )
+  next
+}
+
+///|
+fn fuzz_assert_negotiator_sequence(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+) -> Unit {
+  let mut rng = fuzz_rng(seed)
+  let mut negotiator = @telnet.Negotiator::new()
+  for step = 0; step < sequence_length; step = step + 1 {
+    let (r1, event) = fuzz_generated_negotiation_event(rng)
+    let (r2, decision) = fuzz_generated_policy_decision(r1)
+    let transition = negotiator.receive(event, decision)
+    negotiator = fuzz_apply_and_assert_negotiator_transition(
+      case_name,
+      seed,
+      iteration,
+      sequence_length,
+      step,
+      "receive decision=" + fuzz_policy_decision_name(decision),
+      negotiator,
+      transition,
+    )
+    rng = r2
+  }
+}
+
+///|
+fn fuzz_assert_negotiator_interleaved_sequence(
+  case_name : String,
+  seed : Int,
+  iteration : Int,
+  sequence_length : Int,
+) -> Unit {
+  let mut rng = fuzz_rng(seed)
+  let mut negotiator = @telnet.Negotiator::new()
+  for step = 0; step < sequence_length; step = step + 1 {
+    let (r0, mode) = rng.bounded_int(3)
+    if mode == 0 {
+      let (r1, option_choice) = r0.bounded_int(64)
+      let (r2, fallback) = r1.byte()
+      let (r3, side) = fuzz_generated_option_side(r2)
+      let (r4, enable) = r3.bool()
+      let option = fuzz_negotiation_option(option_choice, fallback)
+      let transition = negotiator.request(option, side, enable)
+      negotiator = fuzz_apply_and_assert_negotiator_transition(
+        case_name,
+        seed,
+        iteration,
+        sequence_length,
+        step,
+        "request side=" +
+        fuzz_option_side_name(side) +
+        " enable=" +
+        enable.to_string(),
+        negotiator,
+        transition,
+      )
+      rng = r4
+    } else {
+      let (r1, event) = fuzz_generated_negotiation_event(r0)
+      let (r2, decision) = fuzz_generated_policy_decision(r1)
+      let transition = negotiator.receive(event, decision)
+      negotiator = fuzz_apply_and_assert_negotiator_transition(
+        case_name,
+        seed,
+        iteration,
+        sequence_length,
+        step,
+        "receive decision=" + fuzz_policy_decision_name(decision),
+        negotiator,
+        transition,
+      )
+      rng = r2
+    }
+  }
+}
+
+///|
+test "negotiator fuzz covers generated command sequences" {
+  // Invariants: generated WILL/WONT/DO/DONT sequences must not panic, each
+  // transition emits at most two actions, any emitted action stays scoped to the
+  // input option, and apply/state_for keeps one latest state per option.
+  for iteration = 0; iteration < 32; iteration = iteration + 1 {
+    fuzz_assert_negotiator_sequence(
+      "incoming-generated-" + iteration.to_string(),
+      13000 + iteration,
+      iteration,
+      1 + iteration * 5 % 41,
+    )
+  }
+}
+
+///|
+test "negotiator fuzz covers interleaved local requests and peer commands" {
+  // Interleaving local request() calls with peer receive() events covers the
+  // same bounded-output and state uniqueness invariants while exercising
+  // loop-prevention paths for duplicate and opposite queued requests.
+  for iteration = 0; iteration < 24; iteration = iteration + 1 {
+    fuzz_assert_negotiator_interleaved_sequence(
+      "interleaved-generated-" + iteration.to_string(),
+      13100 + iteration,
+      iteration,
+      2 + iteration * 7 % 37,
+    )
+  }
+}
+
+///|
 test "parse encode stability fuzz covers targeted valid streams" {
   fuzz_assert_parse_encode_stable(fuzz_bytes_from_ints([]), 10100)
   fuzz_assert_parse_encode_stable(
