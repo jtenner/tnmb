@@ -48,6 +48,8 @@ The initial corpus intentionally mirrors categories commonly tested by mature TE
 11. Option payload fixtures for TERMINAL-TYPE, NAWS, NEW-ENVIRON, CHARSET, LINEMODE, and START_TLS.
 12. RFC 1143 Q-method transition matrices for WILL, WON'T, DO, and DON'T.
 13. A libtelnet-inspired private-option/ZMP negotiation fixture.
+14. Edge cases for repeated IAC bytes, command/data ordering, escaped IAC bytes inside subnegotiation, malformed subnegotiation commands, buffer-capacity errors, zero-copy spans, unknown/private options, invalid option payload shapes, and independent local/remote Q-method halves.
+15. Comprehensive matrix fixtures for every option code, representative invalid `IAC` commands, every split point in representative streams, NVT CR policies, binary-mode invariants, data-coalescing policies, negotiation initiation, full RFC 1143 half-state/verb/decision combinations, option validation, round-trip pairs, and hardening inputs.
 
 ## Important limitation
 
