@@ -1,51 +1,65 @@
 # Project Agents.md Guide
 
-This is a [MoonBit](https://docs.moonbitlang.com) project.
+MoonBit TELNET protocol library: `moonbit-telnet/telnet`.
 
-You can browse and install extra skills here:
-<https://github.com/moonbitlang/skills>
+## Repository map
 
-## Project Structure
+- `moon.mod.json` — module metadata.
+- `moon.pkg` — root library package manifest.
+- `telnet.mbt` — public TELNET model/types.
+- `api.mbt` — parser, encoder, negotiator, option mapping, and codecs.
+- `pkg.generated.mbti` — generated public interface; update with `moon info`.
+- `*_test.mbt` / `*_wbtest.mbt` — blackbox and whitebox tests.
+- `cmd/main/` — tiny runnable package: `moon run cmd/main`.
+- `cmd/bench/` — benchmark package; `main.mbt` is the suite, `time.c` is the
+  native timing stub.
+- `docs/wiki/` — design/compliance source of truth. Start at
+  `docs/wiki/README.md`.
+- `.githooks/` — optional hooks: `git config core.hooksPath .githooks`.
 
-- MoonBit packages are organized per directory; each directory contains a
-  `moon.pkg` file listing its dependencies. Each package has its files and
-  blackbox test files (ending in `_test.mbt`) and whitebox test files (ending in
-  `_wbtest.mbt`).
+## Commands
 
-- In the toplevel directory, there is a `moon.mod.json` file listing module
-  metadata.
+```sh
+moon fmt
+moon info
+moon test
+moon run cmd/main
+moon run --target js cmd/bench
+moon run --target native cmd/bench
+```
 
-## Coding convention
+Use `moon test --update` only for intentional snapshot updates. Before finishing
+code changes, run `moon info && moon fmt` and `moon test`, then inspect `.mbti`
+diffs for expected public API changes.
 
-- MoonBit code is organized in block style, each block is separated by `///|`,
-  the order of each block is irrelevant. In some refactorings, you can process
-  block by block independently.
+## Benchmarks
 
-- Try to keep deprecated blocks in file called `deprecated.mbt` in each
-  directory.
+Run from the repo root:
 
-## Tooling
+```sh
+moon run --target js cmd/bench
+moon run --target native cmd/bench
+```
 
-- `moon fmt` is used to format your code properly.
+Benchmarks report elapsed ms, ops/sec, approximate MB/s, and a checksum. Native
+benchmark timing depends on `cmd/bench/time.c` via `native-stub`.
 
-- `moon ide` provides project navigation helpers like `peek-def`, `outline`, and
-  `find-references`. See $moonbit-agent-guide for details.
+## Documentation rules
 
-- `moon info` is used to update the generated interface of the package, each
-  package has a generated interface file `.mbti`, it is a brief formal
-  description of the package. If nothing in `.mbti` changes, this means your
-  change does not bring the visible changes to the external package users, it is
-  typically a safe refactoring.
+- Treat `docs/wiki/` as the source of truth for protocol/design decisions.
+- Protocol claims should cite RFC Editor, IETF Datatracker, or IANA registry
+  URLs in the wiki.
+- Each implemented behavior should have a linked wiki section and tests.
+- If the IANA option registry changes, update both `docs/wiki/00-sources.md` and
+  `docs/wiki/04-options-catalog.md`.
 
-- In the last step, run `moon info && moon fmt` to update the interface and
-  format the code. Check the diffs of `.mbti` file to see if the changes are
-  expected.
+## Conventions
 
-- Run `moon test` to check tests pass. MoonBit supports snapshot testing; when
-  changes affect outputs, run `moon test --update` to refresh snapshots.
-
-- Prefer `assert_eq` or `assert_true(pattern is Pattern(...))` for results that
-  are stable or very unlikely to change. Use snapshot tests to record current
-  behavior. For solid, well-defined results (e.g. scientific computations),
-  prefer assertion tests. You can use `moon coverage analyze > uncovered.log` to
-  see which parts of your code are not covered by tests.
+- MoonBit packages live in directories with `moon.pkg`.
+- Code is block-style; blocks are separated by `///|`.
+- Prefer explicit assertions (`assert_eq`, `assert_true(pattern is Pattern(...))`)
+  for stable protocol behavior; use snapshots when outputs are intentionally
+  recorded.
+- Put deprecated blocks in `deprecated.mbt` when needed.
+- Useful tools: `moon ide` for navigation and
+  `moon coverage analyze > uncovered.log` for coverage review.
