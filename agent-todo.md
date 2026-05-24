@@ -17,40 +17,27 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 
 ## Latest completed slice
 
-- Completed slice 10, unknown option and command catalog coverage, on 2026-05-24.
-- Added deterministic exhaustive fuzz-style catalog tests for every option byte `0..255`, every `Command::from_byte` slot, strict/lenient `IAC <byte>` parser slots, all negotiation verb/option byte pairs, and all subnegotiation option bytes.
-- Added failure diagnostics with phase, byte value, strictness, wire bytes, and expected/observed normalized parse events for parser catalog mismatches.
-- Fuzz coverage exposed incomplete known-option mappings: named constructors for option codes `7..23`, `26..30`, `41`, `43`, and `47..49` did not round-trip through `KnownOption::from_code`/`to_code`; fixed the mapping helpers.
-- Fuzz coverage also caught the misleading public name for option code `47`; renamed `KnownOption::KerberosV5` to `KnownOption::Kermit` and updated `pkg.generated.mbti` with `moon info`.
-- Remaining follow-ups: continue with slice 11 (CR/LF/NUL text handling fuzz cases) and the still-active general failure-output refinement for older fuzz helpers.
+- Completed slice 11, CR/LF/NUL text handling fuzz cases, on 2026-05-24.
+- Added deterministic newline fuzz helpers with a small independent no-IAC reference model for `Preserve`, `ValidateNvt`, and `NormalizeToLf` CR policies.
+- Added targeted and generated CR/LF/NUL-biased cases that compare expected normalized events across whole-buffer parsing, all representative split points, and one-byte feeds.
+- Added explicit command-boundary regression coverage for CR before/after TELNET IAC commands and documented current binary-mode assumptions in `docs/wiki/06-testing-compliance.md`.
+- No production parser bug was exposed in this slice.
+- Remaining follow-ups: continue with slice 12 (RFC-inspired seed corpus) and the still-active general failure-output refinement for older fuzz helpers.
 - Reproduction seeds/details:
-  - No PRNG seeds are needed for this slice; coverage is exhaustive over byte ranges.
-  - Option catalog: named cases for codes `0..49` plus `255`, and unknown-preservation checks for all other bytes in `0..255`.
-  - Command catalog: helper checks for bytes `0..255`; parser checks for `[255, byte]` in both strict modes; negotiation wires `[255, verb, option]` for verbs `251..254` and options `0..255`; subnegotiation wires `[255, 250, option, 255, 240]` for options `0..255`.
+  - Targeted no-IAC wires: `[]`, `[13]`, `[10]`, `[0]`, `[13, 10]`, `[13, 0]`, `[13, 88]`, `[65, 13, 10, 66]`, `[65, 13, 0, 66]`, `[65, 13, 88, 13, 10, 0]`, `[13, 13, 10, 13, 0, 10]`, and `[0, 13, 0, 10, 13, 90]` under all three CR policies.
+  - Generated no-IAC CR/LF/NUL-biased wires use seeds `14100 + policy_index * 257 + iteration`, policy indexes `0..2`, iterations `0..23`, and lengths `(iteration * 7 + policy_index * 3) % 37`.
+  - Preserve/binary-like mixed-data seed `14200` uses `[0, 13, 10, 128, 254, 13, 0, 42]`.
+  - Command-boundary seeds `14300..14303` use `[13, 255, 241, 10]` and `[255, 241, 13, 10, 65]`.
 - Commands run:
   - `git status --short && git log --oneline -5`
   - `find '*fuzz*'`
-  - `moon info && moon fmt && moon test` before implementation: 860 passed
-  - `moon info && moon fmt && moon test` during implementation: 863 passed / 2 failed after new catalog tests exposed missing option mappings and an incorrect lenient-parser expectation in the new fuzz helper; fixed in the same task
-  - `moon info && moon fmt && moon test` after implementation: 865 passed
+  - `moon info && moon fmt && moon test` before implementation: 865 passed
+  - `moon info && moon fmt && moon test` after implementation: 869 passed
   - `git status --short && git diff --stat`
-  - `git diff -- pkg.generated.mbti`
-  - `git diff -- api.mbt telnet.mbt telnet_fuzz_test.mbt telnet_policy_blind_spots_tdd_test.mbt | sed -n '1,260p'`
-  - `moon info && moon fmt && moon test` final verification after TODO updates: 865 passed (run twice after implementation; both passed)
-  - `git diff --check && git status --short`
+  - `git diff -- telnet_fuzz_test.mbt docs/wiki/06-testing-compliance.md agent-todo.md | sed -n '1,260p'`
+  - `moon info && moon fmt && moon test && git diff --check && git status --short` final verification: 869 passed; working tree contained only this run's three modified files (run twice after implementation/TODO updates; both passed)
 
 ## Active work slices
-
-### 11. CR/LF/NUL text handling fuzz cases
-
-- Generate text/data streams biased around CR, LF, CR LF, CR NUL, bare CR, and mixed binary bytes.
-- Assert documented TELNET newline behavior and binary-mode behavior if implemented.
-- Add focused regressions for any discovered newline normalization bug.
-
-Acceptance criteria:
-
-- Text/newline handling has fuzz and regression coverage.
-- Binary/text mode assumptions are documented.
 
 ### 12. Add seed corpus from RFC-inspired examples
 

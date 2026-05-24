@@ -1268,6 +1268,415 @@ test "parser streaming fuzz covers generated fast paths and dense streams" {
 }
 
 ///|
+fn fuzz_cr_policy_name(policy : @telnet.CrPolicy) -> String {
+  match policy {
+    @telnet.CrPolicy::Preserve => "Preserve"
+    @telnet.CrPolicy::ValidateNvt => "ValidateNvt"
+    @telnet.CrPolicy::NormalizeToLf => "NormalizeToLf"
+  }
+}
+
+///|
+fn fuzz_data_coalescing_name(coalescing : @telnet.DataCoalescing) -> String {
+  match coalescing {
+    @telnet.DataCoalescing::EmitImmediately => "EmitImmediately"
+    @telnet.DataCoalescing::CoalesceUntilCommand => "CoalesceUntilCommand"
+    @telnet.DataCoalescing::CoalesceUntilCapacity => "CoalesceUntilCapacity"
+  }
+}
+
+///|
+fn fuzz_newline_config(
+  policy : @telnet.CrPolicy,
+  coalescing : @telnet.DataCoalescing,
+  max_data_chunk_bytes : Int,
+) -> @telnet.ParserConfig {
+  @telnet.ParserConfig::{
+    max_data_chunk_bytes,
+    max_subnegotiation_bytes: 64,
+    cr_policy: policy,
+    data_coalescing: coalescing,
+    strict_commands: true,
+  }
+}
+
+///|
+fn fuzz_flush_reference_data(
+  out : Array[FuzzObservedEvent],
+  data : Array[Byte],
+) -> Unit {
+  if data.length() > 0 {
+    fuzz_push_data_event(out, Bytes::from_array(data.copy()))
+    data.clear()
+  }
+}
+
+///|
+fn fuzz_reference_no_iac_newline_observation(
+  policy : @telnet.CrPolicy,
+  input : Bytes,
+) -> FuzzParseObservation {
+  let events : Array[FuzzObservedEvent] = []
+  let data : Array[Byte] = []
+  let mut complete = true
+  let mut i = 0
+  while i < input.length() {
+    let value = input[i]
+    if policy == @telnet.CrPolicy::Preserve {
+      data.push(value)
+    } else if value == byte(13) {
+      if i + 1 == input.length() {
+        fuzz_flush_reference_data(events, data)
+        events.push(
+          FuzzObservedEvent::Error(@telnet.TelnetError::{
+            kind: @telnet.TelnetErrorKind::PolicyRejected,
+            offset: i,
+            byte: Some(byte(13)),
+            option: None,
+          }),
+        )
+        complete = false
+      } else {
+        let next = input[i + 1]
+        if policy == @telnet.CrPolicy::ValidateNvt {
+          if next == byte(10) || next == byte(0) {
+            data.push(byte(13))
+            data.push(next)
+            i = i + 1
+          } else {
+            fuzz_flush_reference_data(events, data)
+            events.push(
+              FuzzObservedEvent::Error(@telnet.TelnetError::{
+                kind: @telnet.TelnetErrorKind::PolicyRejected,
+                offset: i + 1,
+                byte: Some(next),
+                option: None,
+              }),
+            )
+          }
+        } else if next == byte(10) {
+          data.push(byte(10))
+          i = i + 1
+        } else if next == byte(0) {
+          data.push(byte(13))
+          i = i + 1
+        } else {
+          data.push(byte(13))
+        }
+      }
+    } else {
+      data.push(value)
+    }
+    i = i + 1
+  }
+  fuzz_flush_reference_data(events, data)
+  FuzzParseObservation::{ events, complete }
+}
+
+///|
+fn fuzz_newline_failure_prefix(
+  case_name : String,
+  seed : Int,
+  config : @telnet.ParserConfig,
+  input : Bytes,
+) -> String {
+  "newline fuzz case=" +
+  case_name +
+  " seed=" +
+  seed.to_string() +
+  " length=" +
+  input.length().to_string() +
+  " cr_policy=" +
+  fuzz_cr_policy_name(config.cr_policy) +
+  " coalescing=" +
+  fuzz_data_coalescing_name(config.data_coalescing) +
+  " max_data_chunk_bytes=" +
+  config.max_data_chunk_bytes.to_string() +
+  " wire=" +
+  fuzz_bytes_literal(input)
+}
+
+///|
+fn fuzz_assert_newline_observation(
+  case_name : String,
+  config : @telnet.ParserConfig,
+  input : Bytes,
+  expected : FuzzParseObservation,
+  seed : Int,
+) -> Unit {
+  let observed = fuzz_observe_whole(config, input)
+  if observed != expected {
+    println(fuzz_newline_failure_prefix(case_name, seed, config, input))
+    println("expected " + fuzz_observation_summary(expected))
+    println("observed " + fuzz_observation_summary(observed))
+    abort("newline fuzz observation mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_newline_streaming_matches(
+  case_name : String,
+  config : @telnet.ParserConfig,
+  input : Bytes,
+  chunks : Array[Int],
+  whole : FuzzParseObservation,
+  seed : Int,
+) -> Unit raise {
+  let chunked = fuzz_observe_chunks(config, input, chunks)
+  if chunked != whole {
+    println(fuzz_newline_failure_prefix(case_name, seed, config, input))
+    println("chunks=" + fuzz_int_array_literal(chunks))
+    println("whole " + fuzz_observation_summary(whole))
+    println("chunked " + fuzz_observation_summary(chunked))
+    abort("newline fuzz streaming mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_newline_case(
+  case_name : String,
+  config : @telnet.ParserConfig,
+  input : Bytes,
+  expected : FuzzParseObservation,
+  seed : Int,
+) -> Unit raise {
+  fuzz_assert_parser_smoke(config, input)
+  fuzz_assert_newline_observation(case_name, config, input, expected, seed)
+  let whole = fuzz_observe_whole(config, input)
+  for split = 0; split <= input.length(); split = split + 1 {
+    fuzz_assert_newline_streaming_matches(
+      case_name,
+      config,
+      input,
+      [0, split, 0, input.length() - split, 0],
+      whole,
+      seed,
+    )
+  }
+  fuzz_assert_newline_streaming_matches(
+    case_name,
+    config,
+    input,
+    fuzz_one_byte_chunks(input.length()),
+    whole,
+    seed,
+  )
+}
+
+///|
+fn fuzz_assert_no_iac_newline_case(
+  case_name : String,
+  policy : @telnet.CrPolicy,
+  input : Bytes,
+  seed : Int,
+) -> Unit raise {
+  let config = fuzz_newline_config(
+    policy,
+    @telnet.DataCoalescing::CoalesceUntilCommand,
+    128,
+  )
+  fuzz_assert_newline_case(
+    case_name,
+    config,
+    input,
+    fuzz_reference_no_iac_newline_observation(policy, input),
+    seed,
+  )
+}
+
+///|
+fn fuzz_crlf_biased_no_iac_byte(choice : Int, fallback : Byte) -> Byte {
+  match choice {
+    0 | 1 | 2 => byte(13)
+    3 | 4 => byte(10)
+    5 | 6 => byte(0)
+    7 => byte(65)
+    8 => byte(90)
+    9 => byte(127)
+    10 => byte(128)
+    11 => byte(254)
+    _ => if fallback == byte(255) { byte(42) } else { fallback }
+  }
+}
+
+///|
+fn fuzz_crlf_biased_no_iac_bytes(seed : Int, length : Int) -> Bytes {
+  let out = Array::make(length, byte(0))
+  let mut rng = fuzz_rng(seed)
+  for i = 0; i < length; i = i + 1 {
+    let (r1, choice) = rng.bounded_int(18)
+    let (r2, fallback) = r1.byte()
+    out[i] = fuzz_crlf_biased_no_iac_byte(choice, fallback)
+    rng = r2
+  }
+  Bytes::from_array(out)
+}
+
+///|
+test "newline fuzz covers NVT CR LF NUL policy cases" {
+  let seeds = [
+    fuzz_bytes_from_ints([]),
+    fuzz_bytes_from_ints([13]),
+    fuzz_bytes_from_ints([10]),
+    fuzz_bytes_from_ints([0]),
+    fuzz_bytes_from_ints([13, 10]),
+    fuzz_bytes_from_ints([13, 0]),
+    fuzz_bytes_from_ints([13, 88]),
+    fuzz_bytes_from_ints([65, 13, 10, 66]),
+    fuzz_bytes_from_ints([65, 13, 0, 66]),
+    fuzz_bytes_from_ints([65, 13, 88, 13, 10, 0]),
+    fuzz_bytes_from_ints([13, 13, 10, 13, 0, 10]),
+    fuzz_bytes_from_ints([0, 13, 0, 10, 13, 90]),
+  ]
+  let policies = [
+    @telnet.CrPolicy::Preserve,
+    @telnet.CrPolicy::ValidateNvt,
+    @telnet.CrPolicy::NormalizeToLf,
+  ]
+  for policy_index = 0
+      policy_index < policies.length()
+      policy_index = policy_index + 1 {
+    for case_index = 0; case_index < seeds.length(); case_index = case_index + 1 {
+      fuzz_assert_no_iac_newline_case(
+        "targeted-" + case_index.to_string(),
+        policies[policy_index],
+        seeds[case_index],
+        14000 + policy_index * 100 + case_index,
+      )
+    }
+  }
+}
+
+///|
+test "newline fuzz covers generated CR LF NUL biased text streams" {
+  let policies = [
+    @telnet.CrPolicy::Preserve,
+    @telnet.CrPolicy::ValidateNvt,
+    @telnet.CrPolicy::NormalizeToLf,
+  ]
+  for policy_index = 0
+      policy_index < policies.length()
+      policy_index = policy_index + 1 {
+    for iteration = 0; iteration < 24; iteration = iteration + 1 {
+      let length = (iteration * 7 + policy_index * 3) % 37
+      fuzz_assert_no_iac_newline_case(
+        "generated-" + iteration.to_string(),
+        policies[policy_index],
+        fuzz_crlf_biased_no_iac_bytes(
+          14100 + policy_index * 257 + iteration,
+          length,
+        ),
+        14100 + policy_index * 257 + iteration,
+      )
+    }
+  }
+}
+
+///|
+test "newline fuzz documents Preserve as current binary-like core mode" {
+  // The core parser has no negotiated BINARY session state yet.  Fuzzer
+  // coverage treats Preserve as the binary-like parser configuration: mixed
+  // bytes, including CR/LF/NUL, are emitted unchanged unless TELNET IAC
+  // framing is present. NVT CR validation/normalization is opt-in via
+  // ParserConfig::cr_policy and is covered separately above.
+  let config = fuzz_newline_config(
+    @telnet.CrPolicy::Preserve,
+    @telnet.DataCoalescing::CoalesceUntilCommand,
+    128,
+  )
+  let input = fuzz_bytes_from_ints([0, 13, 10, 128, 254, 13, 0, 42])
+  fuzz_assert_newline_case(
+    "preserve-mixed-binary-bytes",
+    config,
+    input,
+    FuzzParseObservation::{
+      events: [FuzzObservedEvent::Data(input)],
+      complete: true,
+    },
+    14200,
+  )
+}
+
+///|
+test "newline fuzz covers command boundaries around CR" {
+  let preserve = fuzz_newline_config(
+    @telnet.CrPolicy::Preserve,
+    @telnet.DataCoalescing::CoalesceUntilCommand,
+    128,
+  )
+  let validate = fuzz_newline_config(
+    @telnet.CrPolicy::ValidateNvt,
+    @telnet.DataCoalescing::CoalesceUntilCommand,
+    128,
+  )
+  let normalize = fuzz_newline_config(
+    @telnet.CrPolicy::NormalizeToLf,
+    @telnet.DataCoalescing::CoalesceUntilCommand,
+    128,
+  )
+  fuzz_assert_newline_case(
+    "preserve-cr-before-command",
+    preserve,
+    fuzz_bytes_from_ints([13, 255, 241, 10]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([13])),
+        FuzzObservedEvent::Command(@telnet.Command::NOP),
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([10])),
+      ],
+      complete: true,
+    },
+    14300,
+  )
+  fuzz_assert_newline_case(
+    "validate-cr-before-command-rejects-iac-as-cr-follower",
+    validate,
+    fuzz_bytes_from_ints([13, 255, 241, 10]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Error(@telnet.TelnetError::{
+          kind: @telnet.TelnetErrorKind::PolicyRejected,
+          offset: 1,
+          byte: Some(byte(255)),
+          option: None,
+        }),
+        FuzzObservedEvent::Command(@telnet.Command::NOP),
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([10])),
+      ],
+      complete: true,
+    },
+    14301,
+  )
+  fuzz_assert_newline_case(
+    "normalize-cr-before-command-keeps-bare-cr",
+    normalize,
+    fuzz_bytes_from_ints([13, 255, 241, 10]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([13])),
+        FuzzObservedEvent::Command(@telnet.Command::NOP),
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([10])),
+      ],
+      complete: true,
+    },
+    14302,
+  )
+  fuzz_assert_newline_case(
+    "normalize-command-before-crlf",
+    normalize,
+    fuzz_bytes_from_ints([255, 241, 13, 10, 65]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Command(@telnet.Command::NOP),
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([10, 65])),
+      ],
+      complete: true,
+    },
+    14303,
+  )
+}
+
+///|
 fn fuzz_roundtrip_parser_config() -> @telnet.ParserConfig {
   @telnet.ParserConfig::{
     max_data_chunk_bytes: 128,
