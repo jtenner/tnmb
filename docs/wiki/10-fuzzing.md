@@ -14,6 +14,7 @@ and the IANA TELNET option registry for option-code assignments.
 |---|---|---:|---|
 | Deterministic property tests | `telnet_fuzz_test.mbt` | Yes, via `moon test` | Fast regression suite for parser, encoder, option catalog, and negotiation invariants. |
 | Long deterministic runner | `cmd/fuzz` | No | Reproducible extended exploration with configurable seed, iteration count, length, and target. |
+| Runnable harness support | `cmd/fuzz-common` | No | Shared pure helpers for the deterministic and native runnable harnesses. |
 | Native stdin harness | `cmd/fuzz-native` plus `tools/build-fuzz-native.sh` | No | Optional process-level target for AFL++ or another native coverage-guided engine. |
 | Native seed corpus | `tools/fuzz-corpus/seeds/` | No | Tiny initial inputs for coverage-guided mutation. |
 
@@ -69,6 +70,27 @@ moon run cmd/fuzz -- ci
 
 The CI profile is intentionally bounded: seed `20260524`, 4096 iterations,
 maximum generated wire length 192, and target `all`.
+
+## Helper sharing boundaries
+
+`cmd/fuzz-common` owns the pure helper logic shared by runnable harnesses:
+deterministic RNG, TELNET-biased wire generation, parser configuration presets,
+byte literals, byte slicing/concatenation, `ByteSpan` construction, and one-byte
+chunk construction. `cmd/fuzz` and `cmd/fuzz-native` keep only thin wrappers or
+harness-specific reproduction context around those helpers, which reduces drift
+between deterministic extended fuzzing and native coverage-guided fuzzing.
+
+`telnet_fuzz_test.mbt` intentionally keeps local copies of the small deterministic
+helpers it needs. Those tests compile with the public TELNET package and must not
+make the library package depend on command-only fuzz internals just to run the
+fast default suite. The root tests also contain broader property-specific helper
+families that are not useful to the runnable harnesses.
+
+Observation normalization and failure formatting remain harness-local. The fast
+suite needs detailed assertion summaries for named regression tests, `cmd/fuzz`
+prints seed/iteration/max-length reproduction lines, and `cmd/fuzz-native` prints
+stdin input length for external fuzzers. Keep those formats stable unless a new
+fuzzer command or regression workflow requires an explicit change.
 
 For a short reproducible local probe, pass explicit positional arguments after
 `--`:

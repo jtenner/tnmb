@@ -13,40 +13,34 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 
 ## Latest completed slice
 
-- Completed slice 20, regression backlog cleanup, on 2026-05-24.
-- Audited fuzzer TODOs, skipped/xfail markers, deferred fuzz comments, and possible unused helper definitions in `telnet_fuzz_test.mbt`, `cmd/fuzz`, and `cmd/fuzz-native`.
-- No unexplained skipped fuzz tests, known fuzz failures, dead experiments, or unused fuzz helpers were found; no production parser bug was exposed in this slice.
-- Refined remaining helper-sharing follow-up to cover `cmd/fuzz-native` as well as `telnet_fuzz_test.mbt` and `cmd/fuzz`.
-- Remaining follow-ups: continue with slice 21 (helper deduplication research) and slice 22 (native coverage-guided fuzzer validation/persistent or file-input modes).
+- Completed slice 21, shared runnable fuzzer helpers, on 2026-05-24.
+- Added `cmd/fuzz-common` for shared pure helper logic used by `cmd/fuzz` and `cmd/fuzz-native`: deterministic RNG, TELNET-biased byte generation, parser config presets, byte literals/slicing/concatenation, `ByteSpan` conversion, and one-byte chunks.
+- Left `telnet_fuzz_test.mbt` helper copies local by design so fast package tests do not make the public TELNET package depend on command-only fuzz internals; documented the remaining harness-local observation/failure-format duplication in `docs/wiki/10-fuzzing.md`.
+- No production parser bug was exposed in this slice.
+- Remaining follow-ups: continue with slice 22 (native coverage-guided fuzzer validation/persistent or file-input modes).
 - Reproduction seeds/details:
   - No new fuzz failure seed was discovered.
   - No generated reproduction wire was added.
-  - Audit-only cleanup used no new randomized fuzz seed.
+  - Shared-helper smoke probe used deterministic command seed `424242`, 32 iterations, max length 32, target `all`, checksum `4244`.
+  - CI fuzz profile used seed `20260524`, 4096 iterations, max length 192, target `all`, checksum `3019894`.
+  - Native smoke probe used stdin wire `bytes([255, 255])`, default max input bytes `4096`, checksum `20`.
 - Commands run:
-  - `git status --short && printf '\n--- recent commits ---\n' && git log --oneline -8`
-  - `git grep -n -Ei 'TODO|FIXME|HACK|skip(ped)?|xfail|expected failure' -- ':!agent-todo.md' ':!docs/wiki/api-contract.md' ':!docs/wiki/conformance-matrix.md' ':!docs/wiki/09-verification-corpus.md' || true`
-  - `git grep -n -Ei 'fuzz.*(defer|limit|future|todo|skip|disabled)|fuzzer.*(defer|limit|future|todo|skip|disabled)' -- ':!agent-todo.md' ':!docs/wiki/10-fuzzing.md' || true`
-  - `python3 - <<'PY' ... PY`: checked fuzz helper definitions in `telnet_fuzz_test.mbt`, `cmd/fuzz/main.mbt`, and `cmd/fuzz-native/main.mbt` for possible single-reference unused helpers.
+  - `git status --short && git log --oneline -5`
+  - `git status --short && printf '\n--- recent commits ---\n' && git log --oneline -8 && printf '\n--- changed files in last 3 commits ---\n' && git show --stat --oneline --name-only --no-renames HEAD~3..HEAD`
+  - `python3 - <<'PY' ... PY`: listed helper definitions in `telnet_fuzz_test.mbt`, `cmd/fuzz/main.mbt`, and `cmd/fuzz-native/main.mbt`.
+  - `moon info`: passed after adding `cmd/fuzz-common`.
+  - `moon run cmd/fuzz -- 424242 32 32 all && printf '\377\377' | moon run --target native cmd/fuzz-native`: passed.
+  - `tools/build-fuzz-native.sh && printf '\377\377' | _build/fuzz-native/telnet-fuzz-native`: passed.
   - `moon info && moon fmt`: passed.
   - `moon test`: passed with 876 tests.
-  - `git status --short && printf '\n--- diff stat ---\n' && git diff --stat && printf '\n--- mbti diff ---\n' && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti && printf '\n--- whitespace ---\n' && git diff --check`: whitespace check failed because `moon info` regenerated blank EOF lines in generated `.mbti` files.
-  - `python3 - <<'PY' ... PY && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti && git diff --check`: normalized generated `.mbti` EOF whitespace and passed whitespace check.
+  - `git status --short && printf '\n--- diff stat ---\n' && git diff --stat && printf '\n--- mbti diff ---\n' && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti cmd/fuzz-common/pkg.generated.mbti && printf '\n--- whitespace ---\n' && git diff --check`: whitespace check found regenerated blank EOF lines in generated `.mbti` files.
+  - `python3 - <<'PY' ... PY && git diff --check`: normalized generated `.mbti` EOF whitespace and passed whitespace check.
   - `moon info && moon fmt && moon test`: final verification passed with 876 tests after the todo update.
-  - `git status --short && printf '\n--- diff stat ---\n' && git diff --stat && printf '\n--- mbti diff ---\n' && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti && printf '\n--- whitespace ---\n' && git diff --check`: final whitespace check again found regenerated blank EOF lines in generated `.mbti` files.
-  - `python3 - <<'PY' ... PY && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti && git diff --check`: normalized generated `.mbti` EOF whitespace again and passed final whitespace check.
+  - `git status --short && printf '\n--- diff stat ---\n' && git diff --stat && printf '\n--- mbti diff ---\n' && git diff -- pkg.generated.mbti cmd/fuzz/pkg.generated.mbti cmd/fuzz-native/pkg.generated.mbti cmd/fuzz-common/pkg.generated.mbti && printf '\n--- whitespace ---\n' && git diff --check`: final whitespace check again found regenerated blank EOF lines in generated `.mbti` files.
+  - `python3 - <<'PY' ... PY && git diff --check`: normalized generated `.mbti` EOF whitespace again and passed final whitespace check.
+  - `moon run cmd/fuzz -- ci`: passed with checksum `3019894`.
 
 ## Active work slices
-
-### 21. Shared fuzzer helper research
-
-- Investigate whether deterministic RNG, TELNET-biased input generation, observation normalization, and failure formatting can be shared between `telnet_fuzz_test.mbt`, `cmd/fuzz`, and `cmd/fuzz-native` without exposing test-only API from the public package.
-- Inspection on 2026-05-24 confirmed intentional helper duplication across the fast tests and both runnable harnesses; document exactly which duplication should remain and why if package boundaries make sharing awkward.
-- Preserve fast default tests and keep `cmd/fuzz` and `cmd/fuzz-native` runnable.
-
-Acceptance criteria:
-
-- Helper drift risk is reduced or explicitly documented.
-- No public TELNET API is added solely for fuzz internals.
 
 ### 22. Native coverage-guided fuzzer validation
 

@@ -14,8 +14,6 @@ type FuzzObservedEvent derive(Eq, @debug.Debug)
 
 type FuzzParseObservation derive(Eq, @debug.Debug)
 
-type FuzzRng derive(Eq, @debug.Debug)
-
 type FuzzSettings derive(Eq, @debug.Debug)
 
 type FuzzTarget derive(Eq, @debug.Debug)

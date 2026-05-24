@@ -1,5 +1,6 @@
 import {
   "moonbit-telnet/telnet" @telnet,
+  "moonbit-telnet/telnet/cmd/fuzz-common" @fuzz_common,
   "moonbitlang/core/env",
   "moonbitlang/core/string",
 }

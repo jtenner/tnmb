@@ -1,0 +1,3 @@
+import {
+  "moonbit-telnet/telnet" @telnet,
+}

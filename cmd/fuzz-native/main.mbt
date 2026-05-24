@@ -39,11 +39,6 @@ fn native_read_stdin(_max_bytes : Int) -> Bytes {
 }
 
 ///|
-fn native_b(n : Int) -> Byte {
-  n.to_byte()
-}
-
-///|
 fn native_settings_from_args(args : Array[String]) -> NativeFuzzSettings {
   let max_input_bytes = if args.length() > 1 {
     @string.parse_int(args[1][:]) catch {
@@ -63,64 +58,17 @@ fn native_settings_from_args(args : Array[String]) -> NativeFuzzSettings {
 
 ///|
 fn native_parser_config(index : Int) -> @telnet.ParserConfig {
-  if index == 0 {
-    @telnet.Parser::default_config()
-  } else if index == 1 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 1,
-      max_subnegotiation_bytes: 8,
-      cr_policy: @telnet.CrPolicy::Preserve,
-      data_coalescing: @telnet.DataCoalescing::EmitImmediately,
-      strict_commands: true,
-    }
-  } else if index == 2 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 4,
-      max_subnegotiation_bytes: 4,
-      cr_policy: @telnet.CrPolicy::ValidateNvt,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-      strict_commands: true,
-    }
-  } else if index == 3 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 3,
-      max_subnegotiation_bytes: 3,
-      cr_policy: @telnet.CrPolicy::NormalizeToLf,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCapacity,
-      strict_commands: false,
-    }
-  } else {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 0,
-      max_subnegotiation_bytes: 0,
-      cr_policy: @telnet.CrPolicy::Preserve,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-      strict_commands: true,
-    }
-  }
+  @fuzz_common.parser_config(index)
 }
 
 ///|
 fn native_roundtrip_parser_config() -> @telnet.ParserConfig {
-  @telnet.ParserConfig::{
-    max_data_chunk_bytes: 128,
-    max_subnegotiation_bytes: 128,
-    cr_policy: @telnet.CrPolicy::Preserve,
-    data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-    strict_commands: true,
-  }
+  @fuzz_common.roundtrip_parser_config()
 }
 
 ///|
 fn native_bytes_literal(data : Bytes) -> String {
-  let mut out = "["
-  for i = 0; i < data.length(); i = i + 1 {
-    if i > 0 {
-      out = out + ", "
-    }
-    out = out + data[i].to_int().to_string()
-  }
-  out + "]"
+  @fuzz_common.bytes_literal(data)
 }
 
 ///|
@@ -136,7 +84,7 @@ fn native_reproduction_line(target : String, input : Bytes) -> String {
 
 ///|
 fn native_concat_bytes(left : Bytes, right : Bytes) -> Bytes {
-  Bytes::from_array(left.to_array() + right.to_array())
+  @fuzz_common.concat_bytes(left, right)
 }
 
 ///|
@@ -191,11 +139,7 @@ fn native_normalize_events(
 
 ///|
 fn native_bytes_slice(input : Bytes, start : Int, length : Int) -> Bytes {
-  let out = Array::make(length, native_b(0))
-  for i = 0; i < length; i = i + 1 {
-    out[i] = input[start + i]
-  }
-  Bytes::from_array(out)
+  @fuzz_common.bytes_slice(input, start, length)
 }
 
 ///|
@@ -213,13 +157,7 @@ fn native_observe_whole(
 
 ///|
 fn native_one_byte_chunks(length : Int) -> Array[Int] {
-  let chunks : Array[Int] = []
-  chunks.push(0)
-  for i = 0; i < length; i = i + 1 {
-    chunks.push(1)
-  }
-  chunks.push(0)
-  chunks
+  @fuzz_common.one_byte_chunks(length)
 }
 
 ///|
@@ -276,7 +214,7 @@ fn native_observe_chunks(
 
 ///|
 fn native_span_from_bytes(data : Bytes) -> @telnet.ByteSpan {
-  @telnet.ByteSpan::{ bytes: data, start: 0, length: data.length() }
+  @fuzz_common.span_from_bytes(data)
 }
 
 ///|

@@ -29,11 +29,6 @@
 ///| Targets: all, smoke, streaming, stability.
 
 ///|
-struct FuzzRng {
-  state : Int
-} derive(Eq, Debug)
-
-///|
 enum FuzzTarget {
   All
   Smoke
@@ -65,86 +60,13 @@ struct FuzzParseObservation {
 } derive(Eq, Debug)
 
 ///|
-fn fuzz_rng(seed : Int) -> FuzzRng {
-  let normalized = seed % 65521
-  let positive = if normalized < 0 { normalized + 65521 } else { normalized }
-  FuzzRng::{ state: if positive == 0 { 1 } else { positive } }
-}
-
-///|
-fn FuzzRng::next_int(self : FuzzRng) -> (FuzzRng, Int) {
-  let next = (self.state * 25173 + 13849) % 65521
-  (FuzzRng::{ state: next }, next)
-}
-
-///|
-fn FuzzRng::bounded_int(self : FuzzRng, bound : Int) -> (FuzzRng, Int) {
-  let (next, value) = self.next_int()
-  if bound <= 0 {
-    (next, 0)
-  } else {
-    (next, value % bound)
-  }
-}
-
-///|
-fn b(n : Int) -> Byte {
-  n.to_byte()
-}
-
-///|
-fn FuzzRng::byte(self : FuzzRng) -> (FuzzRng, Byte) {
-  let (next, value) = self.bounded_int(256)
-  (next, b(value))
-}
-
-///|
-fn FuzzRng::chunk_boundary(self : FuzzRng, remaining : Int) -> (FuzzRng, Int) {
-  if remaining <= 0 {
-    let (next, _) = self.next_int()
-    (next, 0)
-  } else {
-    self.bounded_int(remaining + 1)
-  }
-}
-
-///|
-fn fuzz_telnet_biased_byte(choice : Int, fallback : Byte) -> Byte {
-  match choice {
-    0 | 1 | 2 => b(255) // IAC, deliberately dense.
-    3 => b(240) // SE
-    4 => b(241) // NOP
-    5 => b(242) // DM
-    6 => b(250) // SB
-    7 => b(251) // WILL
-    8 => b(252) // WONT
-    9 => b(253) // DO
-    10 => b(254) // DONT
-    11 => b(13) // CR
-    12 => b(10) // LF
-    13 => b(0) // NUL / BINARY option
-    14 => b(1) // ECHO option
-    15 => b(3) // SUPPRESS-GO-AHEAD option
-    16 => b(24) // TERMINAL-TYPE option
-    17 => b(31) // NAWS option
-    18 => b(34) // LINEMODE option
-    19 => b(39) // NEW-ENVIRON option
-    20 => b(46) // START-TLS option
-    _ => fallback
-  }
+fn fuzz_rng(seed : Int) -> @fuzz_common.FuzzRng {
+  @fuzz_common.rng(seed)
 }
 
 ///|
 fn fuzz_telnet_biased_bytes(seed : Int, length : Int) -> Bytes {
-  let out = Array::make(length, b(0))
-  let mut rng = fuzz_rng(seed)
-  for i = 0; i < length; i = i + 1 {
-    let (r1, choice) = rng.bounded_int(28)
-    let (r2, fallback) = r1.byte()
-    out[i] = fuzz_telnet_biased_byte(choice, fallback)
-    rng = r2
-  }
-  Bytes::from_array(out)
+  @fuzz_common.telnet_biased_bytes(seed, length)
 }
 
 ///|
@@ -156,64 +78,17 @@ fn fuzz_input_for_iteration(settings : FuzzSettings, iteration : Int) -> Bytes {
 
 ///|
 fn fuzz_parser_config(index : Int) -> @telnet.ParserConfig {
-  if index == 0 {
-    @telnet.Parser::default_config()
-  } else if index == 1 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 1,
-      max_subnegotiation_bytes: 8,
-      cr_policy: @telnet.CrPolicy::Preserve,
-      data_coalescing: @telnet.DataCoalescing::EmitImmediately,
-      strict_commands: true,
-    }
-  } else if index == 2 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 4,
-      max_subnegotiation_bytes: 4,
-      cr_policy: @telnet.CrPolicy::ValidateNvt,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-      strict_commands: true,
-    }
-  } else if index == 3 {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 3,
-      max_subnegotiation_bytes: 3,
-      cr_policy: @telnet.CrPolicy::NormalizeToLf,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCapacity,
-      strict_commands: false,
-    }
-  } else {
-    @telnet.ParserConfig::{
-      max_data_chunk_bytes: 0,
-      max_subnegotiation_bytes: 0,
-      cr_policy: @telnet.CrPolicy::Preserve,
-      data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-      strict_commands: true,
-    }
-  }
+  @fuzz_common.parser_config(index)
 }
 
 ///|
 fn fuzz_roundtrip_parser_config() -> @telnet.ParserConfig {
-  @telnet.ParserConfig::{
-    max_data_chunk_bytes: 128,
-    max_subnegotiation_bytes: 128,
-    cr_policy: @telnet.CrPolicy::Preserve,
-    data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
-    strict_commands: true,
-  }
+  @fuzz_common.roundtrip_parser_config()
 }
 
 ///|
 fn fuzz_bytes_literal(data : Bytes) -> String {
-  let mut out = "["
-  for i = 0; i < data.length(); i = i + 1 {
-    if i > 0 {
-      out = out + ", "
-    }
-    out = out + data[i].to_int().to_string()
-  }
-  out + "]"
+  @fuzz_common.bytes_literal(data)
 }
 
 ///|
@@ -258,7 +133,7 @@ fn fuzz_observation_summary(observation : FuzzParseObservation) -> String {
 
 ///|
 fn fuzz_concat_bytes(left : Bytes, right : Bytes) -> Bytes {
-  Bytes::from_array(left.to_array() + right.to_array())
+  @fuzz_common.concat_bytes(left, right)
 }
 
 ///|
@@ -308,11 +183,7 @@ fn fuzz_normalize_events(
 
 ///|
 fn fuzz_bytes_slice(input : Bytes, start : Int, length : Int) -> Bytes {
-  let out = Array::make(length, b(0))
-  for i = 0; i < length; i = i + 1 {
-    out[i] = input[start + i]
-  }
-  Bytes::from_array(out)
+  @fuzz_common.bytes_slice(input, start, length)
 }
 
 ///|
@@ -400,7 +271,7 @@ fn fuzz_observe_chunks(
 
 ///|
 fn fuzz_span_from_bytes(data : Bytes) -> @telnet.ByteSpan {
-  @telnet.ByteSpan::{ bytes: data, start: 0, length: data.length() }
+  @fuzz_common.span_from_bytes(data)
 }
 
 ///|

@@ -1,0 +1,45 @@
+// Generated using `moon info`, DON'T EDIT IT
+package "moonbit-telnet/telnet/cmd/fuzz-common"
+
+import {
+  "moonbit-telnet/telnet",
+  "moonbitlang/core/debug",
+}
+
+// Values
+pub fn byte_from_int(Int) -> Byte
+
+pub fn bytes_literal(Bytes) -> String
+
+pub fn bytes_slice(Bytes, Int, Int) -> Bytes
+
+pub fn concat_bytes(Bytes, Bytes) -> Bytes
+
+pub fn one_byte_chunks(Int) -> Array[Int]
+
+pub fn parser_config(Int) -> @telnet.ParserConfig
+
+pub fn rng(Int) -> FuzzRng
+
+pub fn roundtrip_parser_config() -> @telnet.ParserConfig
+
+pub fn span_from_bytes(Bytes) -> @telnet.ByteSpan
+
+pub fn telnet_biased_byte(Int, Byte) -> Byte
+
+pub fn telnet_biased_bytes(Int, Int) -> Bytes
+
+// Errors
+
+// Types and methods
+pub(all) struct FuzzRng {
+  state : Int
+} derive(Eq, @debug.Debug)
+pub fn FuzzRng::bounded_int(Self, Int) -> (Self, Int)
+pub fn FuzzRng::byte(Self) -> (Self, Byte)
+pub fn FuzzRng::chunk_boundary(Self, Int) -> (Self, Int)
+pub fn FuzzRng::next_int(Self) -> (Self, Int)
+
+// Type aliases
+
+// Traits
