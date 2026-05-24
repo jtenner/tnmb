@@ -3600,3 +3600,177 @@ test "RFC-inspired seed corpus fuzz covers parser streaming and stability" {
     fuzz_assert_seed_corpus_parse_encode_stable(case)
   }
 }
+
+///|
+fn fuzz_guardrail_config() -> @telnet.ParserConfig {
+  @telnet.ParserConfig::{
+    max_data_chunk_bytes: 64,
+    max_subnegotiation_bytes: 16,
+    cr_policy: @telnet.CrPolicy::Preserve,
+    data_coalescing: @telnet.DataCoalescing::CoalesceUntilCapacity,
+    strict_commands: true,
+  }
+}
+
+///|
+fn fuzz_event_data_bytes(events : Array[@telnet.Event]) -> Int {
+  let mut total = 0
+  for event in events {
+    match event {
+      @telnet.Event::Data(e) => total = total + e.span.length
+      _ => ()
+    }
+  }
+  total
+}
+
+///|
+fn fuzz_event_negotiation_count(events : Array[@telnet.Event]) -> Int {
+  let mut total = 0
+  for event in events {
+    match event {
+      @telnet.Event::Negotiation(_) => total = total + 1
+      _ => ()
+    }
+  }
+  total
+}
+
+///|
+fn fuzz_event_error_kind_count(
+  events : Array[@telnet.Event],
+  kind : @telnet.TelnetErrorKind,
+) -> Int {
+  let mut total = 0
+  for event in events {
+    match event {
+      @telnet.Event::Error(e) => if e.kind == kind { total = total + 1 }
+      _ => ()
+    }
+  }
+  total
+}
+
+///|
+fn fuzz_ceil_div(n : Int, d : Int) -> Int {
+  if n <= 0 {
+    0
+  } else {
+    (n + d - 1) / d
+  }
+}
+
+///|
+fn fuzz_negotiation_stream(count : Int) -> Bytes {
+  let out : Array[Byte] = []
+  let verbs = [251, 252, 253, 254]
+  for i = 0; i < count; i = i + 1 {
+    out.push(byte(255))
+    out.push(byte(verbs[i % verbs.length()]))
+    out.push(byte(i % 47))
+  }
+  Bytes::from_array(out)
+}
+
+///|
+fn fuzz_oversized_subnegotiation_guardrail_wire(
+  payload_length : Int,
+  negotiation_count : Int,
+) -> Bytes {
+  let out : Array[Byte] = []
+  out.push(byte(255))
+  out.push(byte(250))
+  out.push(byte(31))
+  let payload = fuzz_no_iac_bytes(16017, payload_length)
+  for i = 0; i < payload.length(); i = i + 1 {
+    out.push(payload[i])
+  }
+  out.push(byte(255))
+  out.push(byte(240))
+  let tail = fuzz_negotiation_stream(negotiation_count)
+  for i = 0; i < tail.length(); i = i + 1 {
+    out.push(tail[i])
+  }
+  Bytes::from_array(out)
+}
+
+///|
+test "performance guardrail fuzz bounds large data and escaped IAC event growth" {
+  let config = fuzz_guardrail_config()
+  let large_plain = fuzz_no_iac_bytes(16000, 2048)
+  let plain = @telnet.Parser::new(config).feed(large_plain)
+  let plain_checkpoint = plain.parser.checkpoint()
+  assert_true(plain.bytes_consumed == large_plain.length())
+  assert_true(plain_checkpoint.absolute_offset == large_plain.length())
+  assert_true(plain_checkpoint.buffered_data_length == 0)
+  assert_true(plain_checkpoint.buffered_subnegotiation_length == 0)
+  assert_true(fuzz_event_data_bytes(plain.events) == large_plain.length())
+  assert_true(
+    plain.events.length() ==
+    fuzz_ceil_div(large_plain.length(), config.max_data_chunk_bytes),
+  )
+  let plain_finish = plain.parser.finish()
+  assert_true(plain_finish.complete)
+  assert_true(plain_finish.events.length() == 0)
+
+  let escaped_iac_wire = fuzz_repeat_byte(byte(255), 512)
+  let escaped = @telnet.Parser::new(config).feed(escaped_iac_wire)
+  let escaped_checkpoint = escaped.parser.checkpoint()
+  assert_true(escaped.bytes_consumed == escaped_iac_wire.length())
+  assert_true(escaped_checkpoint.absolute_offset == escaped_iac_wire.length())
+  assert_true(escaped_checkpoint.buffered_data_length == 0)
+  assert_true(escaped_checkpoint.buffered_subnegotiation_length == 0)
+  assert_true(fuzz_event_data_bytes(escaped.events) == 256)
+  assert_true(escaped.events.length() == escaped_iac_wire.length() / 2)
+  let escaped_finish = escaped.parser.finish()
+  assert_true(escaped_finish.complete)
+  assert_true(escaped_finish.events.length() == 0)
+}
+
+///|
+test "performance guardrail fuzz keeps long negotiation streams linear" {
+  let config = fuzz_guardrail_config()
+  let negotiation_count = 512
+  let wire = fuzz_negotiation_stream(negotiation_count)
+  let fed = @telnet.Parser::new(config).feed(wire)
+  let checkpoint = fed.parser.checkpoint()
+  assert_true(fed.bytes_consumed == wire.length())
+  assert_true(checkpoint.absolute_offset == wire.length())
+  assert_true(checkpoint.buffered_data_length == 0)
+  assert_true(checkpoint.buffered_subnegotiation_length == 0)
+  assert_true(fed.events.length() == negotiation_count)
+  assert_true(fuzz_event_negotiation_count(fed.events) == negotiation_count)
+  assert_true(fed.events.length() <= wire.length() / 3 + 1)
+  let finished = fed.parser.finish()
+  assert_true(finished.complete)
+  assert_true(finished.events.length() == 0)
+}
+
+///|
+test "performance guardrail fuzz discards oversized subnegotiation without amplification" {
+  let config = fuzz_guardrail_config()
+  let payload_length = 512
+  let negotiation_count = 64
+  let wire = fuzz_oversized_subnegotiation_guardrail_wire(
+    payload_length, negotiation_count,
+  )
+  let fed = @telnet.Parser::new(config).feed(wire)
+  let checkpoint = fed.parser.checkpoint()
+  assert_true(fed.bytes_consumed == wire.length())
+  assert_true(checkpoint.absolute_offset == wire.length())
+  assert_true(checkpoint.buffered_data_length == 0)
+  assert_true(checkpoint.buffered_subnegotiation_length == 0)
+  assert_true(
+    fuzz_event_error_kind_count(
+      fed.events,
+      @telnet.TelnetErrorKind::SubnegotiationTooLarge,
+    ) ==
+    1,
+  )
+  assert_true(fuzz_event_negotiation_count(fed.events) == negotiation_count)
+  assert_true(fed.events.length() <= negotiation_count + 1)
+  assert_true(fed.events.length() <= wire.length() / 3 + 2)
+  let finished = fed.parser.finish()
+  assert_true(finished.complete)
+  assert_true(finished.events.length() == 0)
+}
