@@ -986,6 +986,9 @@ pub fn Negotiator::apply(
   self : Negotiator,
   transition : NegotiationTransition,
 ) -> Negotiator {
+  if transition.after == transition.before {
+    return self
+  }
   let out = Array::new()
   let mut found = false
   for s in self.states {
@@ -1173,7 +1176,11 @@ pub fn ByteSpan::is_empty(self : ByteSpan) -> Bool {
 
 ///|
 pub fn ByteSpan::to_bytes(self : ByteSpan) -> Bytes {
-  Bytes::makei(self.length, fn(i) { self.bytes[self.start + i] })
+  let output = Bytes::new(self.length)
+  for i = 0; i < self.length; i = i + 1 {
+    setb(output, i, self.bytes[self.start + i])
+  }
+  output
 }
 
 ///|
