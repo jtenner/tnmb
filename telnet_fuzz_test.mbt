@@ -296,3 +296,324 @@ test "parser smoke fuzz covers no-IAC fast paths and dense control streams" {
     }
   }
 }
+
+///|
+enum FuzzObservedEvent {
+  Data(Bytes)
+  Command(@telnet.Command)
+  Negotiation(@telnet.NegotiationEvent)
+  Subnegotiation(@telnet.OptionCode, Bytes)
+  Error(@telnet.TelnetError)
+} derive(Eq, Debug)
+
+///|
+struct FuzzParseObservation {
+  events : Array[FuzzObservedEvent]
+  complete : Bool
+} derive(Eq, Debug)
+
+///|
+fn fuzz_concat_bytes(left : Bytes, right : Bytes) -> Bytes {
+  Bytes::from_array(left.to_array() + right.to_array())
+}
+
+///|
+fn fuzz_push_data_event(out : Array[FuzzObservedEvent], data : Bytes) -> Unit {
+  if data.length() == 0 {
+    return
+  }
+  if out.length() == 0 {
+    out.push(FuzzObservedEvent::Data(data))
+    return
+  }
+  let last_index = out.length() - 1
+  match out[last_index] {
+    FuzzObservedEvent::Data(existing) =>
+      out[last_index] = FuzzObservedEvent::Data(
+        fuzz_concat_bytes(existing, data),
+      )
+    _ => out.push(FuzzObservedEvent::Data(data))
+  }
+}
+
+///|
+fn fuzz_push_normalized_event(
+  out : Array[FuzzObservedEvent],
+  event : @telnet.Event,
+) -> Unit {
+  match event {
+    @telnet.Event::Data(e) => fuzz_push_data_event(out, e.span.to_bytes())
+    @telnet.Event::Command(e) => out.push(FuzzObservedEvent::Command(e.command))
+    @telnet.Event::Negotiation(e) => out.push(FuzzObservedEvent::Negotiation(e))
+    @telnet.Event::Subnegotiation(e) =>
+      out.push(
+        FuzzObservedEvent::Subnegotiation(e.option, e.payload.to_bytes()),
+      )
+    @telnet.Event::Error(e) => out.push(FuzzObservedEvent::Error(e))
+  }
+}
+
+///|
+fn fuzz_normalize_events(
+  events : Array[@telnet.Event],
+) -> Array[FuzzObservedEvent] {
+  let out : Array[FuzzObservedEvent] = []
+  events.each(fn(event) { fuzz_push_normalized_event(out, event) })
+  out
+}
+
+///|
+fn fuzz_bytes_slice(input : Bytes, start : Int, length : Int) -> Bytes {
+  let out = Array::make(length, byte(0))
+  for i = 0; i < length; i = i + 1 {
+    out[i] = input[start + i]
+  }
+  Bytes::from_array(out)
+}
+
+///|
+fn fuzz_observe_whole(
+  config : @telnet.ParserConfig,
+  input : Bytes,
+) -> FuzzParseObservation {
+  let fed = @telnet.Parser::new(config).feed(input)
+  let finished = fed.parser.finish()
+  FuzzParseObservation::{
+    events: fuzz_normalize_events(fed.events + finished.events),
+    complete: finished.complete,
+  }
+}
+
+///|
+fn fuzz_observe_chunks(
+  config : @telnet.ParserConfig,
+  input : Bytes,
+  chunks : Array[Int],
+) -> FuzzParseObservation raise {
+  let mut parser = @telnet.Parser::new(config)
+  let mut offset = 0
+  let mut events : Array[@telnet.Event] = []
+  chunks.each(fn(size) raise {
+    assert_true(size >= 0)
+    assert_true(offset + size <= input.length())
+    let before = parser.checkpoint()
+    let fed = parser.feed(fuzz_bytes_slice(input, offset, size))
+    assert_true(fed.bytes_consumed == size)
+    if size == 0 {
+      assert_true(fed.events.length() == 0)
+      assert_true(fed.parser.checkpoint() == before)
+    }
+    events = events + fed.events
+    parser = fed.parser
+    offset = offset + size
+  })
+  assert_true(offset == input.length())
+  let finished = parser.finish()
+  FuzzParseObservation::{
+    events: fuzz_normalize_events(events + finished.events),
+    complete: finished.complete,
+  }
+}
+
+///|
+fn fuzz_one_byte_chunks(length : Int) -> Array[Int] {
+  let chunks : Array[Int] = []
+  chunks.push(0)
+  for i = 0; i < length; i = i + 1 {
+    chunks.push(1)
+    chunks.push(0)
+  }
+  chunks.push(0)
+  chunks
+}
+
+///|
+fn fuzz_random_chunks(seed : Int, length : Int) -> Array[Int] {
+  let chunks : Array[Int] = []
+  let mut rng = fuzz_rng(seed)
+  let mut remaining = length
+  chunks.push(0)
+  while remaining > 0 {
+    let (next, n) = rng.chunk_boundary(remaining)
+    chunks.push(n)
+    rng = next
+    remaining = remaining - n
+  }
+  chunks.push(0)
+  chunks
+}
+
+///|
+fn fuzz_assert_streaming_equivalent(
+  config : @telnet.ParserConfig,
+  input : Bytes,
+  seed : Int,
+) -> Unit raise {
+  let whole = fuzz_observe_whole(config, input)
+  let single = fuzz_observe_chunks(
+    config,
+    input,
+    fuzz_one_byte_chunks(input.length()),
+  )
+  if single != whole {
+    println(
+      "streaming single-byte mismatch seed=" +
+      seed.to_string() +
+      " length=" +
+      input.length().to_string(),
+    )
+    abort("streaming single-byte mismatch")
+  }
+
+  if input.length() <= 16 {
+    for split = 0; split <= input.length(); split = split + 1 {
+      let split_observed = fuzz_observe_chunks(config, input, [
+        0,
+        split,
+        0,
+        input.length() - split,
+        0,
+      ])
+      if split_observed != whole {
+        println(
+          "streaming split mismatch seed=" +
+          seed.to_string() +
+          " length=" +
+          input.length().to_string() +
+          " split=" +
+          split.to_string(),
+        )
+        abort("streaming split mismatch")
+      }
+    }
+  }
+
+  for pattern = 0; pattern < 3; pattern = pattern + 1 {
+    let chunked = fuzz_observe_chunks(
+      config,
+      input,
+      fuzz_random_chunks(seed + pattern * 655, input.length()),
+    )
+    if chunked != whole {
+      println(
+        "streaming random mismatch seed=" +
+        seed.to_string() +
+        " length=" +
+        input.length().to_string() +
+        " pattern=" +
+        pattern.to_string(),
+      )
+      abort("streaming random mismatch")
+    }
+  }
+}
+
+///|
+test "parser streaming fuzz keeps empty feeds and pending CR equivalent" {
+  let validate = fuzz_parser_config(2)
+  fuzz_assert_streaming_equivalent(
+    validate,
+    fuzz_bytes_from_ints([13, 10]),
+    3001,
+  )
+  fuzz_assert_streaming_equivalent(
+    validate,
+    fuzz_bytes_from_ints([254, 73, 240, 34, 255, 134, 252, 27, 13, 240, 97, 218]),
+    7515,
+  )
+  fuzz_assert_streaming_equivalent(
+    validate,
+    fuzz_bytes_from_ints([31, 31, 3, 39, 13, 255, 251]),
+    7526,
+  )
+  let normalize = fuzz_parser_config(3)
+  fuzz_assert_streaming_equivalent(
+    normalize,
+    fuzz_bytes_from_ints([13, 88]),
+    3002,
+  )
+
+  let parser = @telnet.Parser::new(normalize)
+  let first = parser.feed(fuzz_bytes_from_ints([13]))
+  let before_empty = first.parser.checkpoint()
+  let empty = first.parser.feed(Bytes::new(0))
+  assert_true(empty.bytes_consumed == 0)
+  assert_true(empty.events.length() == 0)
+  assert_true(empty.parser.checkpoint() == before_empty)
+}
+
+///|
+test "parser streaming fuzz covers targeted TELNET edge seeds" {
+  for config_index = 0; config_index < 5; config_index = config_index + 1 {
+    let config = fuzz_parser_config(config_index)
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([]),
+      3100 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([255]),
+      3110 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([255, 255]),
+      3120 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([255, 251, 1]),
+      3130 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([255, 250, 31, 255, 255, 255, 240]),
+      3140 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([13]),
+      3150 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([13, 10]),
+      3160 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([13, 0]),
+      3170 + config_index,
+    )
+    fuzz_assert_streaming_equivalent(
+      config,
+      fuzz_bytes_from_ints([13, 88]),
+      3180 + config_index,
+    )
+  }
+}
+
+///|
+test "parser streaming fuzz covers generated fast paths and dense streams" {
+  for config_index = 0; config_index < 5; config_index = config_index + 1 {
+    let config = fuzz_parser_config(config_index)
+    for iteration = 0; iteration < 16; iteration = iteration + 1 {
+      let no_iac_length = iteration * 5 % 33
+      fuzz_assert_streaming_equivalent(
+        config,
+        fuzz_no_iac_bytes(4000 + config_index * 97 + iteration, no_iac_length),
+        5000 + config_index * 257 + iteration,
+      )
+      let dense_length = (iteration * 7 + 5) % 41
+      fuzz_assert_streaming_equivalent(
+        config,
+        fuzz_telnet_biased_bytes(
+          6000 + config_index * 131 + iteration,
+          dense_length,
+        ),
+        7000 + config_index * 257 + iteration,
+      )
+    }
+  }
+}

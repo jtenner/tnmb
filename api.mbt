@@ -233,6 +233,9 @@ fn Parser::feed_span_with_events(
   span : ByteSpan,
   events : Array[Event],
 ) -> ParserFeedResult {
+  if span.length == 0 {
+    return ParserFeedResult::{ parser: self, events, bytes_consumed: 0 }
+  }
   if can_use_preserve_data_fast_path(self, span) {
     push_preserved_data_events(
       events,
@@ -268,22 +271,24 @@ fn Parser::feed_span_with_events(
   let mut mode = self.checkpoint.mode
   let mut discarding_subnegotiation = self.discarding_subnegotiation
   let mut i = 0
-  if self.pending_cr && span.length > 0 {
+  if self.pending_cr {
     let byte = span.bytes[span.start]
-    if self.config.cr_policy == CrPolicy::ValidateNvt &&
-      byte != b(10) &&
-      byte != b(0) {
-      events.push(
-        err_event(
-          TelnetErrorKind::PolicyRejected,
-          self.checkpoint.absolute_offset,
-          Some(byte),
-          None,
-        ),
-      )
-      data.push(byte)
-      flush_data(data, events)
-      i = 1
+    if self.config.cr_policy == CrPolicy::ValidateNvt {
+      if byte != b(10) && byte != b(0) {
+        events.push(
+          err_event(
+            TelnetErrorKind::PolicyRejected,
+            self.checkpoint.absolute_offset,
+            Some(byte),
+            None,
+          ),
+        )
+      } else {
+        data.push(b(13))
+        data.push(byte)
+        flush_data(data, events)
+        i = 1
+      }
     } else if self.config.cr_policy == CrPolicy::NormalizeToLf && byte == b(10) {
       data.push(b(10))
       flush_data(data, events)
@@ -292,6 +297,8 @@ fn Parser::feed_span_with_events(
       data.push(b(13))
       flush_data(data, events)
       i = 1
+    } else if self.config.cr_policy == CrPolicy::NormalizeToLf {
+      data.push(b(13))
     }
   }
   while i < span.length {
@@ -336,12 +343,14 @@ fn Parser::feed_span_with_events(
         } else if self.config.cr_policy == CrPolicy::ValidateNvt &&
           byte == b(13) &&
           i + 1 == span.length {
+          flush_data(data, events)
           data.push(byte)
         } else if self.config.cr_policy == CrPolicy::ValidateNvt &&
           byte == b(13) &&
           i + 1 < span.length &&
           span.bytes[span.start + i + 1] != b(10) &&
           span.bytes[span.start + i + 1] != b(0) {
+          flush_data(data, events)
           events.push(
             err_event(
               TelnetErrorKind::PolicyRejected,
@@ -353,6 +362,7 @@ fn Parser::feed_span_with_events(
         } else if self.config.cr_policy == CrPolicy::NormalizeToLf &&
           byte == b(13) &&
           i + 1 == span.length {
+          flush_data(data, events)
           data.push(byte)
         } else if self.config.cr_policy == CrPolicy::NormalizeToLf &&
           byte == b(13) &&

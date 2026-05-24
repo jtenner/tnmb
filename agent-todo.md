@@ -11,6 +11,9 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 - Refinement for slice 3: include inputs with no `IAC` to exercise the preserve-data fast path and inputs with dense `IAC`/TELNET command bytes to exercise the state machine path.
 - Refinement for slice 3: assert parser progress invariants for every generated case (`bytes_consumed == input.length()`, checkpoint `absolute_offset` advances by the input length after `feed`, and `finish` resets to a normal zero-offset parser) across default, immediate-emission, CR-validation, CR-normalization, and hardened zero-capacity configs.
 - Refinement for slice 4: compare whole-buffer parsing with one-byte chunks and deterministic random chunk boundaries, including zero-length chunks, because `Parser::feed` accepts empty `Bytes` and should consume zero bytes without changing observable output.
+- 2026-05-24 slice 4 pre-implementation survey: repository is clean at `8924401 Add parser smoke fuzz tests`; existing split-equivalence coverage is representative only (`telnet_expanded_behavior_tdd_test.mbt`) and compares raw event arrays, so the fuzz property should normalize adjacent `Data` events and `ByteSpan` ownership differences before comparison.
+- Refinement for slice 4: include `finish` output in whole-vs-chunked comparisons so incomplete trailing `IAC`, negotiation verbs, pending CR, and unterminated subnegotiations are checked with identical final diagnostics.
+- Refinement for slice 4: assert every chunked feed consumes exactly the chunk length and that zero-length chunks leave the parser checkpoint unchanged, while allowing observable data coalescing differences to collapse in the normalized event stream.
 - Refinement for slice 5: when round-tripping canonical escaped data, explicitly include spans that are suffixes of larger `Bytes` so `ByteSpan::start`/`length` handling is covered.
 - Refinement for slice 13: failure output should include the PRNG seed, iteration, generated length, byte array, parser config, and whether the case was whole-buffer or chunked.
 
@@ -98,17 +101,51 @@ Remaining follow-ups:
 - Slice 4 should reuse `fuzz_parser_config`, no-`IAC` seeds, and dense TELNET seeds for whole-buffer vs chunked parsing equivalence.
 - Slice 13 should improve assertion diagnostics so failures print seed, config index, iteration, length, byte array, and case family.
 
-### 4. Streaming chunk equivalence property
+### 4. Streaming chunk equivalence property — completed 2026-05-24
 
-- For arbitrary byte buffers, compare parsing the whole buffer with parsing it split across deterministic random chunk boundaries.
-- Exercise chunk sizes of 0/1 where supported, single-byte chunks, two chunks at every possible split for small inputs, and random chunk patterns for larger inputs.
-- Define and document expected behavior for incomplete trailing TELNET commands/subnegotiations.
+- Added a deterministic whole-buffer vs chunked parser equivalence property in `telnet_fuzz_test.mbt`.
+- The property normalizes adjacent `Data` events and `ByteSpan` ownership differences, then compares feed events plus `finish` events and `complete` status.
+- Chunk coverage includes leading/trailing zero-length feeds, one-byte chunks with zero-length feeds between bytes, every two-chunk split for inputs up to 16 bytes, and three deterministic random chunk patterns for each generated input.
+- Chunked feeds now assert `bytes_consumed == chunk.length()` and that zero-length chunks emit no events and leave the checkpoint unchanged.
+- Fixed parser bugs exposed by the property:
+  - zero-length `Parser::feed` could clear pending CR state;
+  - split `ValidateNvt` CR LF dropped the CR byte;
+  - split `NormalizeToLf` CR followed by an ordinary byte dropped the CR byte;
+  - CR at the end of a chunk with preceding data was emitted too early instead of becoming pending;
+  - validate-policy errors could be ordered differently around buffered data and could consume an `IAC` byte after a split CR instead of reprocessing it as TELNET framing.
+- Reduced regression seeds now live in the named test `parser streaming fuzz keeps empty feeds and pending CR equivalent`:
+  - `config_index=2`, seed `3001`, input `[13, 10]` for split validate CR LF.
+  - `config_index=2`, generated seed `7515`, input `[254, 73, 240, 34, 255, 134, 252, 27, 13, 240, 97, 218]` for validate-policy error ordering with preceding data.
+  - `config_index=2`, generated seed `7526`, input `[31, 31, 3, 39, 13, 255, 251]` for split CR before `IAC` reprocessing.
+  - `config_index=3`, seed `3002`, input `[13, 88]` for normalize CR followed by ordinary data.
+  - Empty-feed regression: after feeding `[13]` under `config_index=3`, feeding `Bytes::new(0)` consumes zero bytes, emits no events, and preserves the checkpoint.
+- Generated coverage details:
+  - Targeted seeds: `[]`, `[255]`, `[255,255]`, `[255,251,1]`, `[255,250,31,255,255,255,240]`, `[13]`, `[13,10]`, `[13,0]`, `[13,88]` across all five `fuzz_parser_config` variants.
+  - No-`IAC` generated cases use seeds `4000 + config_index * 97 + iteration`, lengths `(iteration * 5) % 33`, `iteration = 0..15`.
+  - Dense TELNET generated cases use seeds `6000 + config_index * 131 + iteration`, lengths `(iteration * 7 + 5) % 41`, `iteration = 0..15`.
+  - Random chunk patterns use seeds `property_seed + pattern * 655`, `pattern = 0..2`; generated property seeds are `5000 + config_index * 257 + iteration` for no-`IAC` cases and `7000 + config_index * 257 + iteration` for dense TELNET cases.
+- Commands run for this slice:
+  - `git status --short && git log --oneline -8`
+  - `find '*fuzz*'`, `find '*_test.mbt'`, `find '*_wbtest.mbt'`
+  - `moon info && moon fmt && moon test` before implementation: 845 passed
+  - `moon info && moon fmt && moon test` during implementation: compile failed on invalid `_` loop variable in `fuzz_one_byte_chunks`
+  - `moon info && moon fmt && moon test` during implementation: 847 passed, 1 failed before parser fixes
+  - `moon test --help | head -80`
+  - `python3 - <<'PY' ... PY` to map deterministic dense-stream seeds to byte arrays while reducing failures
+  - `moon test telnet_fuzz_test.mbt -f 'parser streaming fuzz covers generated fast paths and dense streams'` while reducing parser bugs: failed with seed `7515` single-byte mismatch, failed with seed `7515` split `9`, failed with seed `7526`, then passed after fixes
+  - `moon info && moon fmt && moon test` final verification: 848 passed
 
-Acceptance criteria:
+Acceptance criteria status:
 
-- Whole-vs-streaming equivalence property is tested.
-- Any parser-state API limitations are documented.
-- `moon test` passes.
+- Whole-vs-streaming equivalence property is tested: done.
+- Any parser-state API limitations are documented: done; zero-length feeds are now fixed to be state-preserving rather than documented as a limitation.
+- `moon test` passes: done.
+
+Remaining follow-ups:
+
+- Slice 5 should reuse normalized event comparison when round-tripping parser output so `ByteSpan` ownership differences do not cause false failures.
+- Slice 13 should expand failure diagnostics to include config index, iteration, generated length, byte array, parser config, and whole/chunked mode; slice 4 currently prints only seed/length/split or random pattern before aborting.
+
 
 ### 5. Encode-then-parse valid event corpus
 
