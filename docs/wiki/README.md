@@ -15,6 +15,7 @@ public APIs should point back here before code is merged.
 - [06-testing-compliance.md](06-testing-compliance.md) — compliance tests, fixtures, fuzz/property strategy.
 - [07-maintenance.md](07-maintenance.md) — wiki stewardship, source updates, release checklist.
 - [08-test-first-type-scope.md](08-test-first-type-scope.md) — test-first API surface and performance-oriented type inventory.
+- [09-verification-corpus.md](09-verification-corpus.md) — provenance and coverage notes for the initial test-fixture corpus.
 
 ## Rules for maintaining the wiki
 
