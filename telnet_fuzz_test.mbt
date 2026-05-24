@@ -313,6 +313,134 @@ struct FuzzParseObservation {
 } derive(Eq, Debug)
 
 ///|
+fn fuzz_bytes_literal(data : Bytes) -> String {
+  let mut out = "["
+  for i = 0; i < data.length(); i = i + 1 {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + data[i].to_int().to_string()
+  }
+  out + "]"
+}
+
+///|
+fn fuzz_command_name(command : @telnet.Command) -> String {
+  match command {
+    @telnet.Command::SE => "SE"
+    @telnet.Command::NOP => "NOP"
+    @telnet.Command::DM => "DM"
+    @telnet.Command::BRK => "BRK"
+    @telnet.Command::IP => "IP"
+    @telnet.Command::AO => "AO"
+    @telnet.Command::AYT => "AYT"
+    @telnet.Command::EC => "EC"
+    @telnet.Command::EL => "EL"
+    @telnet.Command::GA => "GA"
+    @telnet.Command::SB => "SB"
+    @telnet.Command::WILL => "WILL"
+    @telnet.Command::WONT => "WONT"
+    @telnet.Command::DO => "DO"
+    @telnet.Command::DONT => "DONT"
+    @telnet.Command::IAC => "IAC"
+  }
+}
+
+///|
+fn fuzz_negotiation_verb_name(verb : @telnet.NegotiationVerb) -> String {
+  match verb {
+    @telnet.NegotiationVerb::Will => "WILL"
+    @telnet.NegotiationVerb::Wont => "WONT"
+    @telnet.NegotiationVerb::Do => "DO"
+    @telnet.NegotiationVerb::Dont => "DONT"
+  }
+}
+
+///|
+fn fuzz_error_kind_name(kind : @telnet.TelnetErrorKind) -> String {
+  match kind {
+    @telnet.TelnetErrorKind::IncompleteIac => "IncompleteIac"
+    @telnet.TelnetErrorKind::IncompleteNegotiation => "IncompleteNegotiation"
+    @telnet.TelnetErrorKind::IncompleteSubnegotiation =>
+      "IncompleteSubnegotiation"
+    @telnet.TelnetErrorKind::InvalidCommandByte => "InvalidCommandByte"
+    @telnet.TelnetErrorKind::InvalidOptionByte => "InvalidOptionByte"
+    @telnet.TelnetErrorKind::SubnegotiationTooLarge => "SubnegotiationTooLarge"
+    @telnet.TelnetErrorKind::UnexpectedSubnegotiationEnd =>
+      "UnexpectedSubnegotiationEnd"
+    @telnet.TelnetErrorKind::PolicyRejected => "PolicyRejected"
+    @telnet.TelnetErrorKind::UnsupportedOption => "UnsupportedOption"
+  }
+}
+
+///|
+fn fuzz_byte_option_summary(byte : Byte?) -> String {
+  match byte {
+    Some(value) => value.to_int().to_string()
+    None => "none"
+  }
+}
+
+///|
+fn fuzz_option_summary(option : @telnet.OptionCode?) -> String {
+  match option {
+    Some(value) => value.value.to_int().to_string()
+    None => "none"
+  }
+}
+
+///|
+fn fuzz_observed_event_summary(event : FuzzObservedEvent) -> String {
+  match event {
+    FuzzObservedEvent::Data(data) => "Data(" + fuzz_bytes_literal(data) + ")"
+    FuzzObservedEvent::Command(command) =>
+      "Command(" + fuzz_command_name(command) + ")"
+    FuzzObservedEvent::Negotiation(event) =>
+      "Negotiation(" +
+      fuzz_negotiation_verb_name(event.verb) +
+      ", " +
+      event.option.value.to_int().to_string() +
+      ")"
+    FuzzObservedEvent::Subnegotiation(option, payload) =>
+      "Subnegotiation(" +
+      option.value.to_int().to_string() +
+      ", " +
+      fuzz_bytes_literal(payload) +
+      ")"
+    FuzzObservedEvent::Error(error) =>
+      "Error(" +
+      fuzz_error_kind_name(error.kind) +
+      ", offset=" +
+      error.offset.to_string() +
+      ", byte=" +
+      fuzz_byte_option_summary(error.byte) +
+      ", option=" +
+      fuzz_option_summary(error.option) +
+      ")"
+  }
+}
+
+///|
+fn fuzz_observed_events_summary(events : Array[FuzzObservedEvent]) -> String {
+  let mut out = "["
+  for i = 0; i < events.length(); i = i + 1 {
+    if i > 0 {
+      out = out + ", "
+    }
+    out = out + fuzz_observed_event_summary(events[i])
+  }
+  out + "]"
+}
+
+///|
+fn fuzz_observation_summary(observation : FuzzParseObservation) -> String {
+  "complete=" +
+  observation.complete.to_string() +
+  " events=" +
+  fuzz_observed_events_summary(observation.events)
+}
+
+///|
 fn fuzz_concat_bytes(left : Bytes, right : Bytes) -> Bytes {
   Bytes::from_array(left.to_array() + right.to_array())
 }
@@ -966,6 +1094,271 @@ fn fuzz_assert_parse_encode_excluded(input : Bytes, seed : Int) -> Unit raise {
       )
       abort("parse encode exclusion unexpectedly encodable")
     }
+  }
+}
+
+///|
+fn fuzz_repeat_byte(value : Byte, length : Int) -> Bytes {
+  let out = Array::make(length, value)
+  Bytes::from_array(out)
+}
+
+///|
+fn fuzz_expected_iac_run(length : Int) -> FuzzParseObservation {
+  let events : Array[FuzzObservedEvent] = []
+  let escaped_count = length / 2
+  if escaped_count > 0 {
+    events.push(
+      FuzzObservedEvent::Data(fuzz_repeat_byte(byte(255), escaped_count)),
+    )
+  }
+  if length % 2 == 1 {
+    events.push(
+      FuzzObservedEvent::Error(@telnet.TelnetError::{
+        kind: @telnet.TelnetErrorKind::IncompleteIac,
+        offset: if length == 0 {
+          0
+        } else {
+          length - 1
+        },
+        byte: Some(byte(255)),
+        option: None,
+      }),
+    )
+  }
+  FuzzParseObservation::{ events, complete: length % 2 == 0 }
+}
+
+///|
+fn fuzz_iac_case_failure_prefix(
+  case_name : String,
+  seed : Int,
+  input : Bytes,
+) -> String {
+  "IAC stress case=" +
+  case_name +
+  " seed=" +
+  seed.to_string() +
+  " length=" +
+  input.length().to_string() +
+  " wire=" +
+  fuzz_bytes_literal(input)
+}
+
+///|
+fn fuzz_assert_iac_observation(
+  case_name : String,
+  input : Bytes,
+  expected : FuzzParseObservation,
+  seed : Int,
+) -> Unit {
+  let observed = fuzz_observe_whole(fuzz_roundtrip_parser_config(), input)
+  if observed != expected {
+    println(fuzz_iac_case_failure_prefix(case_name, seed, input))
+    println("expected " + fuzz_observation_summary(expected))
+    println("observed " + fuzz_observation_summary(observed))
+    abort("IAC stress observation mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_iac_streaming(
+  case_name : String,
+  input : Bytes,
+  expected : FuzzParseObservation,
+  seed : Int,
+) -> Unit raise {
+  fuzz_assert_iac_observation(case_name, input, expected, seed)
+  let whole = fuzz_observe_whole(fuzz_roundtrip_parser_config(), input)
+  for split = 0; split <= input.length(); split = split + 1 {
+    let chunked = fuzz_observe_chunks(fuzz_roundtrip_parser_config(), input, [
+      0,
+      split,
+      0,
+      input.length() - split,
+      0,
+    ])
+    if chunked != whole {
+      println(fuzz_iac_case_failure_prefix(case_name, seed, input))
+      println("split=" + split.to_string())
+      println("whole " + fuzz_observation_summary(whole))
+      println("chunked " + fuzz_observation_summary(chunked))
+      abort("IAC stress streaming mismatch")
+    }
+  }
+  let single = fuzz_observe_chunks(
+    fuzz_roundtrip_parser_config(),
+    input,
+    fuzz_one_byte_chunks(input.length()),
+  )
+  if single != whole {
+    println(fuzz_iac_case_failure_prefix(case_name, seed, input))
+    println("chunks=one-byte-with-empty-feeds")
+    println("whole " + fuzz_observation_summary(whole))
+    println("chunked " + fuzz_observation_summary(single))
+    abort("IAC stress one-byte streaming mismatch")
+  }
+}
+
+///|
+fn fuzz_assert_iac_encoder_case(
+  case_name : String,
+  item : @telnet.EncodeItem,
+  expected_wire : Bytes,
+  expected : FuzzParseObservation,
+  seed : Int,
+) -> Unit raise {
+  let wire = fuzz_encode_item_to_bytes(@telnet.Encoder::canonical(), item, seed)
+  if wire != expected_wire {
+    println(fuzz_iac_case_failure_prefix(case_name, seed, wire))
+    println("expected_wire=" + fuzz_bytes_literal(expected_wire))
+    abort("IAC stress encoder wire mismatch")
+  }
+  fuzz_assert_iac_streaming(case_name, wire, expected, seed)
+}
+
+///|
+test "IAC stress fuzz covers data escaping and repeated runs" {
+  fuzz_assert_iac_encoder_case(
+    "escaped-data-single-iac",
+    @telnet.EncodeItem::EscapedData(
+      fuzz_span_suffix(11000, fuzz_bytes_from_ints([255])),
+    ),
+    fuzz_bytes_from_ints([255, 255]),
+    FuzzParseObservation::{
+      events: [FuzzObservedEvent::Data(fuzz_bytes_from_ints([255]))],
+      complete: true,
+    },
+    11000,
+  )
+  fuzz_assert_iac_encoder_case(
+    "escaped-data-mixed-iac",
+    @telnet.EncodeItem::EscapedData(
+      fuzz_span_suffix(11001, fuzz_bytes_from_ints([65, 255, 66, 255])),
+    ),
+    fuzz_bytes_from_ints([65, 255, 255, 66, 255, 255]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([65, 255, 66, 255])),
+      ],
+      complete: true,
+    },
+    11001,
+  )
+  for length = 1; length <= 9; length = length + 1 {
+    fuzz_assert_iac_streaming(
+      "repeated-iac-run-" + length.to_string(),
+      fuzz_repeat_byte(byte(255), length),
+      fuzz_expected_iac_run(length),
+      11100 + length,
+    )
+  }
+}
+
+///|
+test "IAC stress fuzz covers subnegotiation escapes and embedded commands" {
+  fuzz_assert_iac_encoder_case(
+    "subnegotiation-escaped-iac-payload",
+    @telnet.EncodeItem::Subnegotiation(@telnet.SubnegotiationEvent::{
+      option: @telnet.OptionCode::{ value: byte(31) },
+      payload: fuzz_span_suffix(11200, fuzz_bytes_from_ints([1, 255, 2, 255])),
+    }),
+    fuzz_bytes_from_ints([255, 250, 31, 1, 255, 255, 2, 255, 255, 255, 240]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Subnegotiation(
+          @telnet.OptionCode::{ value: byte(31) },
+          fuzz_bytes_from_ints([1, 255, 2, 255]),
+        ),
+      ],
+      complete: true,
+    },
+    11200,
+  )
+  fuzz_assert_iac_streaming(
+    "subnegotiation-embedded-iac-command-is-not-payload",
+    fuzz_bytes_from_ints([255, 250, 31, 65, 255, 241, 66, 255, 240]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Error(@telnet.TelnetError::{
+          kind: @telnet.TelnetErrorKind::InvalidCommandByte,
+          offset: 5,
+          byte: Some(byte(241)),
+          option: None,
+        }),
+        FuzzObservedEvent::Subnegotiation(
+          @telnet.OptionCode::{ value: byte(31) },
+          fuzz_bytes_from_ints([65, 66]),
+        ),
+      ],
+      complete: true,
+    },
+    11201,
+  )
+  fuzz_assert_iac_streaming(
+    "subnegotiation-trailing-iac-is-incomplete",
+    fuzz_bytes_from_ints([255, 250, 31, 65, 255]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Error(@telnet.TelnetError::{
+          kind: @telnet.TelnetErrorKind::IncompleteSubnegotiation,
+          offset: 4,
+          byte: Some(byte(65)),
+          option: None,
+        }),
+      ],
+      complete: false,
+    },
+    11202,
+  )
+}
+
+///|
+test "IAC stress fuzz covers command boundaries" {
+  fuzz_assert_iac_encoder_case(
+    "command-after-iac-nop",
+    @telnet.EncodeItem::Command(@telnet.Command::NOP),
+    fuzz_bytes_from_ints([255, 241]),
+    FuzzParseObservation::{
+      events: [FuzzObservedEvent::Command(@telnet.Command::NOP)],
+      complete: true,
+    },
+    11300,
+  )
+  fuzz_assert_iac_streaming(
+    "data-command-data-with-command-byte-at-chunk-boundary",
+    fuzz_bytes_from_ints([65, 255, 241, 66]),
+    FuzzParseObservation::{
+      events: [
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([65])),
+        FuzzObservedEvent::Command(@telnet.Command::NOP),
+        FuzzObservedEvent::Data(fuzz_bytes_from_ints([66])),
+      ],
+      complete: true,
+    },
+    11301,
+  )
+  let boundary = fuzz_observe_chunks(
+    fuzz_roundtrip_parser_config(),
+    fuzz_bytes_from_ints([65, 255, 241, 66]),
+    [2, 1, 1],
+  )
+  if boundary.events !=
+    [
+      FuzzObservedEvent::Data(fuzz_bytes_from_ints([65])),
+      FuzzObservedEvent::Command(@telnet.Command::NOP),
+      FuzzObservedEvent::Data(fuzz_bytes_from_ints([66])),
+    ] ||
+    !boundary.complete {
+    println(
+      fuzz_iac_case_failure_prefix(
+        "explicit-command-byte-after-iac-boundary",
+        11302,
+        fuzz_bytes_from_ints([65, 255, 241, 66]),
+      ),
+    )
+    println("observed " + fuzz_observation_summary(boundary))
+    abort("IAC stress explicit command boundary mismatch")
   }
 }
 

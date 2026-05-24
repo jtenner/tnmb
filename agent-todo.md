@@ -14,43 +14,30 @@ Before and after code changes, follow `AGENTS.md`: run `moon info && moon fmt` a
 ## Active refinements
 
 - Failure output should include enough detail to reproduce a case: PRNG seed, iteration, generated length, byte array, parser config, whether the case was whole-buffer or chunked, encoded wire bytes when relevant, and expected/observed normalized events when practical.
-- Focused `IAC` stress work should cover trailing bare `IAC`, repeated `IAC` runs, subnegotiation payload escapes, and command boundaries.
 
 ## Latest completed slice
 
-- Completed slice 6, parse-then-encode stability property, on 2026-05-24.
-- Added canonical parse/encode/parse idempotence checks for complete error-free observations; parser `Error` events and `finish.complete == false` are explicitly treated as non-encodable tails.
-- No parser or encoder bugs were discovered, so no reduced regression fixes were needed.
+- Completed slice 7, TELNET `IAC` escaping stress cases, on 2026-05-24.
+- Added focused deterministic tests for canonical data escaping, bare/trailing `IAC`, repeated `IAC` runs, escaped `IAC IAC` inside subnegotiation payloads, embedded `IAC` commands inside `SB ... SE`, and command bytes following `IAC` at chunk boundaries.
+- Added `IAC` stress assertion helpers that print case name, seed, length, wire bytes, and expected/observed normalized events for easy regression promotion.
+- No parser or encoder bugs were discovered, so no reduced regression fixes or wiki ambiguity notes were needed.
+- Remaining follow-ups: continue with slice 8 (subnegotiation fuzzer) and the still-active general failure-output refinement for non-`IAC` fuzz helpers.
 - Reproduction seeds/details:
-  - Targeted valid streams: `10100` empty, `10101` text, `10102` escaped data `IAC IAC`, `10103` simple commands, `10104` negotiations, `10105` subnegotiation payload with escaped `IAC`.
-  - Explicitly excluded malformed tails: `10200` trailing `IAC`, `10201` incomplete `WILL`, `10202` incomplete `SB`, `10203` incomplete subnegotiation after `IAC`, `10204` unexpected `SE`, `10205` invalid command byte.
-  - Generated streams: no-`IAC` seeds `10300..10331`, lengths `iteration * 7 % 49`; dense TELNET-biased seeds `10400..10431`, lengths `(iteration * 9 + 1) % 57`.
+  - Encoder data escaping: `11000` single data `0xff`, `11001` mixed data `[65, 255, 66, 255]`.
+  - Repeated `IAC` runs: `11101..11109` for run lengths `1..9`; odd lengths document incomplete trailing `IAC` and even lengths document escaped data bytes.
+  - Subnegotiation `IAC` handling: `11200` escaped payload `[1, 255, 2, 255]`, `11201` embedded `IAC NOP` excluded from payload with an `InvalidCommandByte`, `11202` incomplete subnegotiation after trailing `IAC`.
+  - Command-boundary cases: `11300` encoded `NOP`, `11301` data/command/data streaming splits, `11302` explicit chunks `[2, 1, 1]` for `[65, IAC, NOP, 66]`.
 - Commands run:
   - `git status --short && git log --oneline -5`
   - `find '*fuzz*'`
-  - `moon info && moon fmt && moon test` before implementation: 850 passed
-  - `moon info && moon fmt && moon test` after implementation: 853 passed
-  - `git status --short && git diff --stat && git diff -- pkg.generated.mbti`
-  - `git status --short && git diff --stat && git diff -- agent-todo.md telnet_fuzz_test.mbt | sed -n '1,320p'`
-  - `moon info && moon fmt && moon test` final verification after TODO update: 853 passed
+  - `moon info && moon fmt && moon test` before implementation: 853 passed
+  - `moon info && moon fmt && moon test` after implementation: 856 passed
+  - `git status --short && git diff --stat`
+  - `git diff -- pkg.generated.mbti`
+  - `git diff -- telnet_fuzz_test.mbt | sed -n '1,260p'`
+  - `moon info && moon fmt && moon test` final verification after TODO update: 856 passed
 
 ## Active work slices
-
-### 7. TELNET `IAC` escaping stress cases
-
-- Add targeted generator and regression tests for `IAC` handling:
-  - data byte `0xff` encoded as `IAC IAC`
-  - bare trailing `IAC`
-  - repeated `IAC` runs of different lengths
-  - `IAC` inside `SB ... SE`
-  - escaped `IAC IAC` inside subnegotiation payloads
-  - command byte following `IAC` at chunk boundary
-- Ensure both parser and encoder behavior is covered.
-
-Acceptance criteria:
-
-- Focused tests around all important `IAC` edge cases.
-- Any discovered ambiguity documented in `docs/wiki/`.
 
 ### 8. Subnegotiation fuzzer
 
