@@ -325,6 +325,10 @@ pub(all) struct OptionState {
 pub(all) struct Parser {
   config : ParserConfig
   checkpoint : ParserCheckpoint
+  buffered_data : Bytes
+  buffered_subnegotiation : Bytes
+  pending_cr : Bool
+  discarding_subnegotiation : Bool
 } derive(Eq, @debug.Debug)
 pub fn Parser::checkpoint(Self) -> ParserCheckpoint
 pub fn Parser::default() -> Self
