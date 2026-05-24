@@ -125,7 +125,91 @@ pub fn Parser::feed(self : Parser, chunk : Bytes) -> ParserFeedResult {
 }
 
 ///|
+fn span_has_iac(span : ByteSpan) -> Bool {
+  let mut i = 0
+  while i < span.length {
+    if span.bytes[span.start + i] == b(255) {
+      return true
+    }
+    i = i + 1
+  }
+  false
+}
+
+///|
+fn push_preserved_data_events(
+  events : Array[Event],
+  span : ByteSpan,
+  max_chunk_bytes : Int,
+  coalescing : DataCoalescing,
+) -> Unit {
+  let chunk_size = if coalescing == DataCoalescing::EmitImmediately {
+    1
+  } else {
+    max_chunk_bytes
+  }
+  let mut consumed = 0
+  while consumed < span.length {
+    let remaining = span.length - consumed
+    let n = if remaining < chunk_size { remaining } else { chunk_size }
+    let event_span = if consumed == 0 && n == span.length {
+      ByteSpan::{ bytes: span.bytes, start: span.start, length: n }
+    } else {
+      ByteSpan::{
+        bytes: ByteSpan::{
+          bytes: span.bytes,
+          start: span.start + consumed,
+          length: n,
+        }.to_bytes(),
+        start: 0,
+        length: n,
+      }
+    }
+    events.push(Event::Data(DataEvent::{ span: event_span }))
+    consumed = consumed + n
+  }
+}
+
+///|
+fn can_use_preserve_data_fast_path(parser : Parser, span : ByteSpan) -> Bool {
+  parser.checkpoint.mode == ParserMode::Normal &&
+  !parser.pending_cr &&
+  !parser.discarding_subnegotiation &&
+  parser.buffered_data.length() == 0 &&
+  parser.buffered_subnegotiation.length() == 0 &&
+  parser.config.max_data_chunk_bytes > 0 &&
+  parser.config.cr_policy == CrPolicy::Preserve &&
+  !span_has_iac(span)
+}
+
+///|
 pub fn Parser::feed_span(self : Parser, span : ByteSpan) -> ParserFeedResult {
+  if can_use_preserve_data_fast_path(self, span) {
+    let events = Array::new()
+    push_preserved_data_events(
+      events,
+      span,
+      self.config.max_data_chunk_bytes,
+      self.config.data_coalescing,
+    )
+    return ParserFeedResult::{
+      parser: Parser::{
+        config: self.config,
+        checkpoint: ParserCheckpoint::{
+          mode: ParserMode::Normal,
+          absolute_offset: self.checkpoint.absolute_offset + span.length,
+          buffered_data_length: 0,
+          buffered_subnegotiation_length: 0,
+        },
+        buffered_data: Bytes::new(0),
+        buffered_subnegotiation: Bytes::new(0),
+        pending_cr: false,
+        discarding_subnegotiation: false,
+      },
+      events,
+      bytes_consumed: span.length,
+    }
+  }
   let events = Array::new()
   let data = if self.pending_cr {
     Array::new()
@@ -576,11 +660,20 @@ pub fn Encoder::encode_data(
       required_capacity: 0,
     })
   }
-  let required = if self.canonical {
-    span_required(data, true)
-  } else {
-    data.length
+  if !self.canonical {
+    match output_too_small(data.length, output) {
+      Some(e) => return e
+      None => ()
+    }
+    for i = 0; i < data.length; i = i + 1 {
+      setb(output, i, data.bytes[data.start + i])
+    }
+    return Ok(EncodeResult::{
+      bytes_written: data.length,
+      required_capacity: data.length,
+    })
   }
+  let required = span_required(data, true)
   match output_too_small(required, output) {
     Some(e) => return e
     None => ()
@@ -590,7 +683,7 @@ pub fn Encoder::encode_data(
     let x = data.bytes[data.start + i]
     setb(output, j, x)
     j = j + 1
-    if self.canonical && x == b(255) {
+    if x == b(255) {
       setb(output, j, b(255))
       j = j + 1
     }
