@@ -1,4 +1,4 @@
-///| Benchmark runner for moonbit-telnet/telnet.
+///| Benchmark runner for jtenner/telnet.
 
 ///|
 

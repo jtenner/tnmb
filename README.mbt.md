@@ -1,4 +1,4 @@
-# moonbit-telnet/telnet
+# jtenner/telnet
 
 MoonBit library project for implementing the TELNET protocol.
 

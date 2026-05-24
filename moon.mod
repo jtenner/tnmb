@@ -1,4 +1,4 @@
-name = "moonbit-telnet/telnet"
+name = "jtenner/telnet"
 
 version = "0.1.0"
 

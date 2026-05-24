@@ -1,4 +1,4 @@
-///| Long-running deterministic fuzz runner for moonbit-telnet/telnet.
+///| Long-running deterministic fuzz runner for jtenner/telnet.
 
 ///|
 

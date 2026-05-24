@@ -1,5 +1,5 @@
 // import {
-//   "moonbit-telnet/telnet" @lib,
+//   "jtenner/telnet" @lib,
 // }
 
 options(

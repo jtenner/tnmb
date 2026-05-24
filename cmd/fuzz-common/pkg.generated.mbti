@@ -1,8 +1,8 @@
 // Generated using `moon info`, DON'T EDIT IT
-package "moonbit-telnet/telnet/cmd/fuzz-common"
+package "jtenner/telnet/cmd/fuzz-common"
 
 import {
-  "moonbit-telnet/telnet",
+  "jtenner/telnet",
   "moonbitlang/core/debug",
 }
 

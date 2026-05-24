@@ -1,6 +1,6 @@
 # Project Agents.md Guide
 
-MoonBit TELNET protocol library: `moonbit-telnet/telnet`.
+MoonBit TELNET protocol library: `jtenner/telnet`.
 
 ## Repository map
 
