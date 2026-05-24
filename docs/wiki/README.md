@@ -16,6 +16,7 @@ public APIs should point back here before code is merged.
 - [07-maintenance.md](07-maintenance.md) — wiki stewardship, source updates, release checklist.
 - [08-test-first-type-scope.md](08-test-first-type-scope.md) — test-first API surface and performance-oriented type inventory.
 - [09-verification-corpus.md](09-verification-corpus.md) — provenance and coverage notes for the initial test-fixture corpus.
+- [conformance-matrix.md](conformance-matrix.md) — requirement-to-test traceability matrix.
 
 ## Rules for maintaining the wiki
 
