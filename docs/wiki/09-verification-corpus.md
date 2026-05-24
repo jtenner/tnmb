@@ -52,6 +52,7 @@ The initial corpus intentionally mirrors categories commonly tested by mature TE
 15. Comprehensive matrix fixtures for every option code, representative invalid `IAC` commands, every split point in representative streams, NVT CR policies, binary-mode invariants, data-coalescing policies, negotiation initiation, full RFC 1143 half-state/verb/decision combinations, option validation, round-trip pairs, and hardening inputs.
 16. Blind-spot fixtures for exact RFC 1143 semantic transitions, parser recovery after malformed input, NVT chunk-boundary behavior, directional BINARY state, malformed option matrices, DM/Synch command sequences, encoder capacity/atomicity contracts, and future public API contracts.
 17. Scenario fixtures for login/password ECHO behavior, NAWS/TERMINAL-TYPE startup, MUD-style negotiation, terminal resize, option side policy, encoder sizing formulas, canonicalization rejection cases, START_TLS transition state, hostile transcripts, and conformance traceability.
+18. Behavioral TDD tests in `telnet_behavior_tdd_test.mbt` that call the public placeholder APIs directly and are expected to fail until production parser, encoder, negotiator, mapping, and option-codec implementations exist.
 
 ## Important limitation
 

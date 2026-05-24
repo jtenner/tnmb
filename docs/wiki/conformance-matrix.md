@@ -23,7 +23,7 @@ This matrix maps current source-of-truth requirements to fixture test coverage. 
 | START_TLS state boundary | RFC 2946 + project security policy | `telnet_test.mbt`, `telnet_edge_cases_test.mbt`, `telnet_blind_spots_test.mbt`, `telnet_scenarios_test.mbt` | Fixture coverage |
 | Encoder canonicalization and sizing | RFC 854 + project performance policy | `telnet_test.mbt`, `telnet_comprehensive_spec_test.mbt`, `telnet_blind_spots_test.mbt`, `telnet_scenarios_test.mbt` | Fixture coverage |
 | Hostile/stress inputs | Project security policy | `telnet_comprehensive_spec_test.mbt`, `telnet_scenarios_test.mbt` | Fixture coverage |
-| Public API contracts | Project API policy | `telnet_blind_spots_test.mbt`, `api.mbt`, `docs/wiki/api-contract.md` | Public skeleton exposed with placeholders |
+| Public API contracts | Project API policy | `telnet_blind_spots_test.mbt`, `telnet_behavior_tdd_test.mbt`, `api.mbt`, `docs/wiki/api-contract.md` | Public skeleton exposed with placeholders; behavioral tests intentionally fail until implemented |
 
 ## Remaining status labels
 

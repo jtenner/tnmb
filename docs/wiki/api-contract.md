@@ -95,4 +95,4 @@ Specific codec namespaces:
 
 ## Placeholder policy
 
-All placeholder bodies must be replaced before release. Until then, `moon check` and `moon test` will warn about unfinished code. This is intentional: the API is now visible in the generated interface and can be targeted by behavioral tests.
+All placeholder bodies must be replaced before release. Until then, `moon check` warns about unfinished code and `moon test` is expected to fail because `telnet_behavior_tdd_test.mbt` calls these APIs directly. This is intentional TDD pressure: the API is visible in the generated interface, and the behavioral tests describe the production work still required.
