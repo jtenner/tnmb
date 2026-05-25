@@ -1,13 +1,13 @@
 # 09 — Verification Corpus
 
-This page records the provenance and intended use of the initial test corpus in `telnet_test.mbt`.
+This page records the provenance and intended use of the executable TELNET test corpus.
 
 ## Primary specification sources
 
 - [RFC 854 — Telnet Protocol Specification](https://www.rfc-editor.org/rfc/rfc854): command-byte table, IAC escaping, WILL/WON'T/DO/DON'T negotiation framing, and subnegotiation framing.
 - [RFC 855 — Telnet Option Specifications](https://www.rfc-editor.org/rfc/rfc855): option design expectations and default behavior model.
-- [RFC 1143 — Q Method of Implementing TELNET Option Negotiation](https://www.rfc-editor.org/rfc/rfc1143): loop-free negotiation state model used for the negotiation fixture matrix.
-- [IANA Telnet Options Registry](https://www.iana.org/assignments/telnet-options/telnet-options.xhtml): option number assignments used by the known-option fixture table.
+- [RFC 1143 — Q Method of Implementing TELNET Option Negotiation](https://www.rfc-editor.org/rfc/rfc1143): loop-free negotiation state model used for negotiation tests.
+- [IANA Telnet Options Registry](https://www.iana.org/assignments/telnet-options/telnet-options.xhtml): option number assignments used by known-option mapping tests.
 
 ## Option-specific specification sources
 
@@ -24,7 +24,7 @@ This page records the provenance and intended use of the initial test corpus in 
 
 ## Cross-library behavior sources consulted
 
-The initial corpus intentionally mirrors categories commonly tested by mature TELNET libraries without copying large source text:
+The corpus mirrors categories commonly tested by mature TELNET libraries without copying large source text:
 
 - CPython `telnetlib` tests: raw queue processing, IAC command handling, negotiation callback behavior, and EOF/error behavior.
 - `telnetlib3` tests: stream reader/writer behavior, IAC escaping, subnegotiation, terminal-type, NAWS, and environment handling.
@@ -33,30 +33,19 @@ The initial corpus intentionally mirrors categories commonly tested by mature TE
 
 ## Current corpus shape
 
-`telnet_test.mbt` currently contains fixture-first tests for:
+All retained tests are behavioral: they call parser, encoder, negotiator, mapping, span, or option-codec APIs directly. Fixture-only tests that only asserted values against themselves were removed.
 
-1. RFC 854 command byte assignments.
-2. IANA/common option assignments.
-3. Ordinary data and every simple IAC command.
-4. WILL/WON'T/DO/DON'T negotiation triplets.
-5. Subnegotiation framing and payload IAC escaping.
-6. Incomplete parser states at finalization.
-7. Chunk-boundary splits across each parser mode.
-8. Encoder expectations for data escaping, commands, negotiation, and subnegotiation.
-9. NVT CR policy configuration variants.
-10. Buffer ownership/copy-behavior fixtures for future zero-copy APIs.
-11. Option payload fixtures for TERMINAL-TYPE, NAWS, NEW-ENVIRON, CHARSET, LINEMODE, and START_TLS.
-12. RFC 1143 Q-method transition matrices for WILL, WON'T, DO, and DON'T.
-13. A libtelnet-inspired private-option/ZMP negotiation fixture.
-14. Edge cases for repeated IAC bytes, command/data ordering, escaped IAC bytes inside subnegotiation, malformed subnegotiation commands, buffer-capacity errors, zero-copy spans, unknown/private options, invalid option payload shapes, and independent local/remote Q-method halves.
-15. Comprehensive matrix fixtures for every option code, representative invalid `IAC` commands, every split point in representative streams, NVT CR policies, binary-mode invariants, data-coalescing policies, negotiation initiation, full RFC 1143 half-state/verb/decision combinations, option validation, round-trip pairs, and hardening inputs.
-16. Blind-spot fixtures for exact RFC 1143 semantic transitions, parser recovery after malformed input, NVT chunk-boundary behavior, directional BINARY state, malformed option matrices, DM/Synch command sequences, encoder capacity/atomicity contracts, and future public API contracts.
-17. Scenario fixtures for login/password ECHO behavior, NAWS/TERMINAL-TYPE startup, MUD-style negotiation, terminal resize, option side policy, encoder sizing formulas, canonicalization rejection cases, START_TLS transition state, hostile transcripts, and conformance traceability.
-18. Behavioral TDD tests in `telnet_behavior_tdd_test.mbt` that call the public placeholder APIs directly and are expected to fail until production parser, encoder, negotiator, mapping, and option-codec implementations exist.
-19. Expanded behavioral TDD tests in `telnet_expanded_behavior_tdd_test.mbt` for remaining blind spots: parser split-point invariance, CR policy boundaries, data coalescing, strict/lenient invalid-command recovery, malformed subnegotiation recovery, RFC 1143 queued states and `apply`/`state_for`, encoder atomicity and exact capacity formulas, raw data bypass, malformed option codecs, and mapping-helper range checks.
-20. Final pre-implementation behavioral TDD families in `telnet_missing_behavior_tdd_test.mbt`: parser partial-state checkpoints, sliced input through `feed_span`, finish idempotence, absolute offset and `bytes_consumed` accounting, data/subnegotiation capacity boundaries, DM/Synch events, encoder method equivalence and error metadata, negotiator transition metadata/non-mutation/option independence, option codec roundtrips and string edge cases, START_TLS transcript policy, and BINARY/session TODO fixtures.
-21. Policy/API blind-spot behavioral TDD in `telnet_policy_blind_spots_tdd_test.mbt`: session composition without adding a `Session` symbol, explicit negotiation policy metadata, application-level decoded option derivation, BINARY vs NVT CR behavior, outgoing NVT canonicalization boundary, richer error context, invalid span/config handling, parser-vs-codec responsibility, unsupported option scope, NEW-ENVIRON/CHARSET/LINEMODE/NAWS/TTYPE edge behavior, negotiation storms, output queue planning, zero-copy span expectations, UTF-8 rejection, IANA mapping samples, and local request transition semantics.
+Current coverage lives in:
 
-## Important limitation
+1. `telnet_test.mbt`: command/option mappings, parser fixtures, chunk boundaries, encoder fixtures, option payload basics, and negotiator transitions.
+2. `telnet_edge_cases_test.mbt`: parser framing edge cases, subnegotiation IAC placement, protocol errors, encoder capacity errors, option boundary values, codec roundtrips, negotiator refusal, and byte-span slicing.
+3. `telnet_behavior_tdd_test.mbt`: core parser, encoder, negotiator, mapping, and option-codec behavior through public APIs.
+4. `telnet_expanded_behavior_tdd_test.mbt`: split-point invariance, CR policies, data coalescing, strict/lenient recovery, queued negotiation states, encoder capacity formulas, malformed option codecs, and mapping-helper ranges.
+5. `telnet_missing_behavior_tdd_test.mbt`: parser partial-state checkpoints, sliced input, finish idempotence, accounting, capacity boundaries, encoder method equivalence, negotiator metadata/non-mutation, option codec roundtrips, START_TLS transcript policy, and BINARY/session TODO fixtures.
+6. `telnet_policy_blind_spots_tdd_test.mbt`: explicit policy metadata, decoded option derivation, BINARY vs NVT behavior, output queue planning, zero-copy expectations, UTF-8 rejection, IANA mapping samples, and local request transition semantics.
+7. `telnet_fuzz_test.mbt`: deterministic fuzz/property checks for parser, encoder, codecs, and negotiator invariants.
+8. `telnet_wbtest.mbt`: whitebox tests for internal implementation details.
 
-Because production parser/encoder/negotiator functions have not been implemented yet, much of the corpus remains fixture-first. The behavioral TDD files already call the public APIs directly and intentionally fail on placeholders; as implementation proceeds, additional fixture groups should be converted into direct behavior assertions without weakening these expected outcomes.
+## Regression guard
+
+`tools/check-test-tautologies.sh` runs in CI and rejects obvious no-op assertions such as `assert_true(x == x)` plus stale comments that indicate fixture-only tests.

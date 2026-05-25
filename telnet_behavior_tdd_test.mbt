@@ -1,8 +1,5 @@
-// Behavioral TDD tests for the public TELNET API.
-//
-// These tests intentionally call the placeholder APIs in `api.mbt`. Until the
-// parser, encoder, negotiator, mapping helpers, and option codecs are actually
-// implemented, `moon test` is expected to fail.
+// Behavioral tests for the public TELNET API. These exercise the production
+// parser, encoder, negotiator, mapping helpers, and option codecs directly.
 
 ///|
 fn assert_parser_events(

@@ -28,6 +28,9 @@ jobs:
       - name: Check formatting
         run: moon fmt --check
 
+      - name: Check test assertions
+        run: bash tools/check-test-tautologies.sh
+
       - name: Run tests
         run: moon test
 

@@ -1,6 +1,6 @@
-// Additional behavioral TDD families for the public TELNET API.
-// These tests intentionally call placeholder functions from `api.mbt`; every
-// test in this file should fail until production behavior exists.
+// Additional behavioral test families for the public TELNET API.
+// These cover parser accounting, encoder equivalence, negotiator metadata,
+// option codec roundtrips, and documented policy boundaries.
 
 ///|
 fn missing_config(

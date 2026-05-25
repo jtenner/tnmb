@@ -1,6 +1,5 @@
-// Expanded behavioral TDD tests for blind spots in the public TELNET API.
-// These intentionally exercise placeholder functions from `api.mbt`; `moon test`
-// should fail until production behavior is implemented.
+// Expanded behavioral tests for blind spots in the public TELNET API.
+// These exercise production parser, encoder, negotiator, and codec behavior.
 
 ///|
 fn tdd_bytes_slice(ns : Array[Int], start : Int, length : Int) -> Bytes {

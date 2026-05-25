@@ -1,7 +1,6 @@
-// Policy/API blind-spot behavioral TDD tests.
-// These lock down decisions that would otherwise cause churn during production
-// implementation. They intentionally call placeholder APIs from `api.mbt` and
-// should fail until those APIs are implemented.
+// Policy/API blind-spot behavioral tests.
+// These lock down decisions that would otherwise cause churn in parser,
+// encoder, negotiator, codec, and policy behavior.
 
 ///|
 fn policy_config() -> @telnet.ParserConfig {

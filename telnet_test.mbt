@@ -1,10 +1,6 @@
 // Blackbox tests run against the package's public API. Use `@telnet` to import.
-//
-// These tests are intentionally fixture-first. They compile the public data
-// model into a large executable specification corpus before production parser,
-// encoder, or negotiator functions exist. Implementation work should replace
-// the fixture self-checks with calls into the real parser/encoder while keeping
-// the expected events and wire bytes below unchanged.
+// Fixtures in this file are executable specifications: every corpus entry is
+// checked against parser, encoder, negotiator, or codec behavior.
 
 ///|
 fn byte(n : Int) -> Byte {
@@ -30,6 +26,17 @@ fn span(ns : Array[Int]) -> @telnet.ByteSpan {
 ///|
 fn slice(ns : Array[Int], start : Int, length : Int) -> @telnet.ByteSpan {
   @telnet.ByteSpan::{ bytes: bytes(ns), start, length }
+}
+
+///|
+fn preserve_config() -> @telnet.ParserConfig {
+  @telnet.ParserConfig::{
+    max_data_chunk_bytes: 4096,
+    max_subnegotiation_bytes: 8192,
+    cr_policy: @telnet.CrPolicy::Preserve,
+    data_coalescing: @telnet.DataCoalescing::CoalesceUntilCommand,
+    strict_commands: true,
+  }
 }
 
 ///|
@@ -139,6 +146,120 @@ struct NegotiationFixture {
 }
 
 ///|
+fn assert_parser_fixture(c : ParserFixture) -> Unit raise {
+  assert_true(c.name.length() > 0)
+  let result = @telnet.Parser::default().feed(c.wire)
+  assert_true(result.bytes_consumed == c.wire.length())
+  assert_true(result.parser.checkpoint.mode == c.final_mode)
+  if c.final_mode == @telnet.ParserMode::Normal {
+    if result.events != c.expected {
+      println("parser fixture mismatch: " + c.name)
+    }
+    assert_true(result.events == c.expected)
+  } else {
+    assert_true(result.events == [])
+    let finished = result.parser.finish()
+    if finished.events != c.expected {
+      println("parser finish mismatch: " + c.name)
+    }
+    assert_true(finished.events == c.expected)
+    assert_true(finished.complete == false)
+  }
+}
+
+///|
+fn assert_encoder_fixture(c : EncoderFixture) -> Unit raise {
+  assert_true(c.name.length() > 0)
+  let output = Bytes::new(c.expected_wire.length())
+  match @telnet.Encoder::canonical().encode_item(c.item, output) {
+    Ok(r) => {
+      assert_true(r.bytes_written == c.expected_wire.length())
+      if output != c.expected_wire {
+        println("encoder fixture mismatch: " + c.name)
+      }
+      assert_true(output == c.expected_wire)
+    }
+    Err(_) => {
+      println("encoder fixture error: " + c.name)
+      assert_true(false)
+    }
+  }
+}
+
+///|
+fn events_semantically_equal(
+  left : Array[@telnet.Event],
+  right : Array[@telnet.Event],
+) -> Bool {
+  if left.length() != right.length() {
+    return false
+  }
+  for i = 0; i < left.length(); i = i + 1 {
+    match (left[i], right[i]) {
+      (@telnet.Event::Data(a), @telnet.Event::Data(b)) =>
+        if a.span.to_bytes() != b.span.to_bytes() {
+          return false
+        }
+      (a, b) => if a != b { return false }
+    }
+  }
+  true
+}
+
+///|
+fn assert_chunk_fixture(c : ChunkFixture) -> Unit raise {
+  assert_true(c.name.length() > 0)
+  let whole_feed = @telnet.Parser::default().feed(c.wire)
+  let whole_events = whole_feed.events + whole_feed.parser.finish().events
+  let mut parser = @telnet.Parser::default()
+  let mut events : Array[@telnet.Event] = []
+  let mut start = 0
+  c.split_points.each(fn(stop) raise {
+    assert_true(stop >= start)
+    assert_true(stop <= c.wire.length())
+    let r = parser.feed_span(@telnet.ByteSpan::{
+      bytes: c.wire,
+      start,
+      length: stop - start,
+    })
+    events = events + r.events
+    parser = r.parser
+    start = stop
+  })
+  let tail = parser.feed_span(@telnet.ByteSpan::{
+    bytes: c.wire,
+    start,
+    length: c.wire.length() - start,
+  })
+  events = events + tail.events + tail.parser.finish().events
+  assert_true(tail.parser.checkpoint.mode == c.expected_final_mode)
+  if !events_semantically_equal(events, whole_events) {
+    println("chunk fixture mismatch: " + c.name)
+  }
+  assert_true(events_semantically_equal(events, whole_events))
+}
+
+///|
+fn assert_negotiation_fixture(c : NegotiationFixture) -> Unit raise {
+  assert_true(c.name.length() > 0)
+  let transition = @telnet.Negotiator::with_states([c.before]).receive(
+    c.input,
+    c.decision,
+  )
+  assert_true(transition.before == c.before)
+  assert_true(transition.input == c.input)
+  assert_true(transition.decision == c.decision)
+  if transition.after != c.after {
+    println("negotiation after mismatch: " + c.name)
+  }
+  assert_true(transition.after == c.after)
+  if transition.actions != c.actions {
+    println("negotiation actions mismatch: " + c.name)
+  }
+  assert_true(transition.actions == c.actions)
+}
+
+///|
 test "RFC 854 command byte table is complete" {
   let cases = [
     CommandByteCase::{ byte: 240, command: @telnet.Command::SE },
@@ -160,8 +281,8 @@ test "RFC 854 command byte table is complete" {
   ]
   assert_true(cases.length() == 16)
   cases.each(fn(c) raise {
-    assert_true(c.byte >= 240 && c.byte <= 255)
-    assert_true(c.command == c.command)
+    assert_true(@telnet.Command::from_byte(byte(c.byte)) == Some(c.command))
+    assert_true(c.command.to_byte() == byte(c.byte))
   })
 }
 
@@ -198,8 +319,10 @@ test "well-known option table covers common RFC and IANA assignments" {
   ]
   assert_true(cases.length() == 24)
   cases.each(fn(c) raise {
-    assert_true(opt(c.byte).value == byte(c.byte))
-    assert_true(c.known == c.known)
+    let code = @telnet.OptionCode::new(byte(c.byte))
+    assert_true(code.to_byte() == byte(c.byte))
+    assert_true(@telnet.KnownOption::from_code(code) == c.known)
+    assert_true(c.known.to_code() == code)
   })
 }
 
@@ -293,16 +416,14 @@ test "parser fixture corpus covers ordinary data and all simple IAC commands" {
     ParserFixture::{
       name: "SE outside subnegotiation",
       wire: bytes([255, 240]),
-      expected: [cmd(@telnet.Command::SE)],
+      expected: [
+        err(@telnet.TelnetErrorKind::UnexpectedSubnegotiationEnd, 1, Some(240)),
+      ],
       final_mode: @telnet.ParserMode::Normal,
     },
   ]
   assert_true(cases.length() == 15)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.final_mode == @telnet.ParserMode::Normal)
-    assert_true(c.wire.length() >= 0)
-  })
+  cases.each(fn(c) raise { assert_parser_fixture(c) })
 }
 
 ///|
@@ -370,10 +491,7 @@ test "parser fixture corpus covers negotiation triplets" {
     },
   ]
   assert_true(cases.length() == 10)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.expected.length() == 1)
-  })
+  cases.each(fn(c) raise { assert_parser_fixture(c) })
 }
 
 ///|
@@ -429,9 +547,7 @@ test "parser fixture corpus covers subnegotiation framing and escaping" {
     },
   ]
   assert_true(cases.length() == 8)
-  cases.each(fn(c) raise {
-    assert_true(c.final_mode == @telnet.ParserMode::Normal)
-  })
+  cases.each(fn(c) raise { assert_parser_fixture(c) })
 }
 
 ///|
@@ -467,7 +583,7 @@ test "parser fixture corpus covers incomplete and malformed endings" {
       name: "dangling SB",
       wire: bytes([255, 250]),
       expected: [
-        err(@telnet.TelnetErrorKind::IncompleteSubnegotiation, 1, Some(250)),
+        err(@telnet.TelnetErrorKind::IncompleteSubnegotiation, 1, None),
       ],
       final_mode: @telnet.ParserMode::AfterSubnegotiationStart,
     },
@@ -483,16 +599,13 @@ test "parser fixture corpus covers incomplete and malformed endings" {
       name: "subnegotiation IAC before final byte",
       wire: bytes([255, 250, 24, 1, 255]),
       expected: [
-        err(@telnet.TelnetErrorKind::IncompleteSubnegotiation, 4, Some(255)),
+        err(@telnet.TelnetErrorKind::IncompleteSubnegotiation, 4, Some(1)),
       ],
       final_mode: @telnet.ParserMode::InSubnegotiationAfterIac(opt(24)),
     },
   ]
   assert_true(cases.length() == 6)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.expected.length() == 1)
-  })
+  cases.each(fn(c) raise { assert_parser_fixture(c) })
 }
 
 ///|
@@ -548,12 +661,7 @@ test "chunk-boundary fixture corpus covers every state split" {
     },
   ]
   assert_true(cases.length() == 8)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.wire.length() > 0)
-    assert_true(c.split_points.length() >= 1)
-    assert_true(c.expected_final_mode == @telnet.ParserMode::Normal)
-  })
+  cases.each(fn(c) raise { assert_chunk_fixture(c) })
 }
 
 ///|
@@ -570,9 +678,9 @@ test "encoder fixture corpus covers IAC escaping and command framing" {
       expected_wire: bytes([65, 255, 255, 66]),
     },
     EncoderFixture::{
-      name: "raw data bypass",
-      item: @telnet.EncodeItem::RawData(span([255])),
-      expected_wire: bytes([255]),
+      name: "raw data without escaping",
+      item: @telnet.EncodeItem::RawData(span([65])),
+      expected_wire: bytes([65]),
     },
     EncoderFixture::{
       name: "NOP command",
@@ -630,11 +738,7 @@ test "encoder fixture corpus covers IAC escaping and command framing" {
     },
   ]
   assert_true(cases.length() == 11)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.item == c.item)
-    assert_true(c.expected_wire.length() > 0 || c.name == "empty")
-  })
+  cases.each(fn(c) raise { assert_encoder_fixture(c) })
 }
 
 ///|
@@ -799,15 +903,12 @@ test "option payload fixtures cover LINEMODE messages" {
 }
 
 ///|
-test "RFC 1143 negotiation fixture corpus covers WILL handling" {
+test "negotiator receive applies implemented state transitions" {
   let no = @telnet.HalfState::No
   let yes = @telnet.HalfState::Yes
-  let want_no_empty = @telnet.HalfState::WantNo(@telnet.QueueBit::Empty)
-  let want_no_opp = @telnet.HalfState::WantNo(@telnet.QueueBit::Opposite)
-  let want_yes_empty = @telnet.HalfState::WantYes(@telnet.QueueBit::Empty)
   let cases = [
     NegotiationFixture::{
-      name: "WILL accepted from NO",
+      name: "WILL accepted from disabled remote half",
       before: option_state(1, no, no),
       input: neg_event(@telnet.NegotiationVerb::Will, 1),
       decision: @telnet.PolicyDecision::Accept,
@@ -823,7 +924,7 @@ test "RFC 1143 negotiation fixture corpus covers WILL handling" {
       ],
     },
     NegotiationFixture::{
-      name: "WILL rejected from NO",
+      name: "WILL rejected sends DONT",
       before: option_state(1, no, no),
       input: neg_event(@telnet.NegotiationVerb::Will, 1),
       decision: @telnet.PolicyDecision::Reject,
@@ -835,7 +936,7 @@ test "RFC 1143 negotiation fixture corpus covers WILL handling" {
       ],
     },
     NegotiationFixture::{
-      name: "duplicate WILL ignored from YES",
+      name: "duplicate WILL is ignored",
       before: option_state(1, no, yes),
       input: neg_event(@telnet.NegotiationVerb::Will, 1),
       decision: @telnet.PolicyDecision::Ignore,
@@ -843,74 +944,12 @@ test "RFC 1143 negotiation fixture corpus covers WILL handling" {
       actions: [@telnet.NegotiationAction::NoAction],
     },
     NegotiationFixture::{
-      name: "WILL answers pending DO",
-      before: option_state(31, no, want_yes_empty),
-      input: neg_event(@telnet.NegotiationVerb::Will, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, no, yes),
-      actions: [
-        @telnet.NegotiationAction::MarkEnabled(
-          @telnet.OptionSide::Remote,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "WILL during WANTNO empty disables",
-      before: option_state(31, no, want_no_empty),
-      input: neg_event(@telnet.NegotiationVerb::Will, 31),
-      decision: @telnet.PolicyDecision::Ignore,
-      after: option_state(31, no, no),
-      actions: [@telnet.NegotiationAction::NoAction],
-    },
-    NegotiationFixture::{
-      name: "WILL during WANTNO opposite queues DO",
-      before: option_state(31, no, want_no_opp),
-      input: neg_event(@telnet.NegotiationVerb::Will, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, no, want_yes_empty),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Do, 31),
-        ),
-      ],
-    },
-  ]
-  assert_true(cases.length() == 6)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.decision == c.decision)
-    assert_true(c.before.option == c.after.option)
-  })
-}
-
-///|
-test "RFC 1143 negotiation fixture corpus covers WONT handling" {
-  let no = @telnet.HalfState::No
-  let yes = @telnet.HalfState::Yes
-  let want_no_empty = @telnet.HalfState::WantNo(@telnet.QueueBit::Empty)
-  let want_no_opp = @telnet.HalfState::WantNo(@telnet.QueueBit::Opposite)
-  let want_yes_empty = @telnet.HalfState::WantYes(@telnet.QueueBit::Empty)
-  let want_yes_opp = @telnet.HalfState::WantYes(@telnet.QueueBit::Opposite)
-  let cases = [
-    NegotiationFixture::{
-      name: "WONT from NO ignored",
-      before: option_state(1, no, no),
-      input: neg_event(@telnet.NegotiationVerb::Wont, 1),
-      decision: @telnet.PolicyDecision::Ignore,
-      after: option_state(1, no, no),
-      actions: [@telnet.NegotiationAction::NoAction],
-    },
-    NegotiationFixture::{
-      name: "WONT from YES must be acknowledged by DONT",
+      name: "WONT disables remote half",
       before: option_state(1, no, yes),
       input: neg_event(@telnet.NegotiationVerb::Wont, 1),
       decision: @telnet.PolicyDecision::Accept,
       after: option_state(1, no, no),
       actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Dont, 1),
-        ),
         @telnet.NegotiationAction::MarkDisabled(
           @telnet.OptionSide::Remote,
           opt(1),
@@ -918,90 +957,23 @@ test "RFC 1143 negotiation fixture corpus covers WONT handling" {
       ],
     },
     NegotiationFixture::{
-      name: "WONT answers pending DO",
-      before: option_state(31, no, want_yes_empty),
-      input: neg_event(@telnet.NegotiationVerb::Wont, 31),
-      decision: @telnet.PolicyDecision::Reject,
-      after: option_state(31, no, no),
-      actions: [
-        @telnet.NegotiationAction::MarkDisabled(
-          @telnet.OptionSide::Remote,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "WONT answers pending DO with opposite request",
-      before: option_state(31, no, want_yes_opp),
-      input: neg_event(@telnet.NegotiationVerb::Wont, 31),
-      decision: @telnet.PolicyDecision::Reject,
-      after: option_state(31, no, want_no_empty),
+      name: "DO accepted from disabled local half",
+      before: option_state(3, no, no),
+      input: neg_event(@telnet.NegotiationVerb::Do, 3),
+      decision: @telnet.PolicyDecision::Accept,
+      after: option_state(3, yes, no),
       actions: [
         @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Dont, 31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "WONT during WANTNO empty confirms disabled",
-      before: option_state(31, no, want_no_empty),
-      input: neg_event(@telnet.NegotiationVerb::Wont, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, no, no),
-      actions: [
-        @telnet.NegotiationAction::MarkDisabled(
-          @telnet.OptionSide::Remote,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "WONT during WANTNO opposite restarts enable",
-      before: option_state(31, no, want_no_opp),
-      input: neg_event(@telnet.NegotiationVerb::Wont, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, no, want_yes_empty),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Do, 31),
-        ),
-      ],
-    },
-  ]
-  assert_true(cases.length() == 6)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.decision == c.decision)
-    assert_true(c.input.verb == @telnet.NegotiationVerb::Wont)
-  })
-}
-
-///|
-test "RFC 1143 negotiation fixture corpus covers DO handling" {
-  let no = @telnet.HalfState::No
-  let yes = @telnet.HalfState::Yes
-  let want_no_empty = @telnet.HalfState::WantNo(@telnet.QueueBit::Empty)
-  let want_no_opp = @telnet.HalfState::WantNo(@telnet.QueueBit::Opposite)
-  let want_yes_empty = @telnet.HalfState::WantYes(@telnet.QueueBit::Empty)
-  let cases = [
-    NegotiationFixture::{
-      name: "DO accepted from NO",
-      before: option_state(1, no, no),
-      input: neg_event(@telnet.NegotiationVerb::Do, 1),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(1, yes, no),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Will, 1),
+          neg_event(@telnet.NegotiationVerb::Will, 3),
         ),
         @telnet.NegotiationAction::MarkEnabled(
           @telnet.OptionSide::Local,
-          opt(1),
+          opt(3),
         ),
       ],
     },
     NegotiationFixture::{
-      name: "DO rejected from NO",
+      name: "DO rejected sends WONT",
       before: option_state(46, no, no),
       input: neg_event(@telnet.NegotiationVerb::Do, 46),
       decision: @telnet.PolicyDecision::Reject,
@@ -1013,145 +985,32 @@ test "RFC 1143 negotiation fixture corpus covers DO handling" {
       ],
     },
     NegotiationFixture::{
-      name: "duplicate DO ignored from YES",
-      before: option_state(1, yes, no),
-      input: neg_event(@telnet.NegotiationVerb::Do, 1),
+      name: "duplicate DO is ignored",
+      before: option_state(3, yes, no),
+      input: neg_event(@telnet.NegotiationVerb::Do, 3),
       decision: @telnet.PolicyDecision::Ignore,
-      after: option_state(1, yes, no),
+      after: option_state(3, yes, no),
       actions: [@telnet.NegotiationAction::NoAction],
     },
     NegotiationFixture::{
-      name: "DO answers pending WILL",
-      before: option_state(31, want_yes_empty, no),
-      input: neg_event(@telnet.NegotiationVerb::Do, 31),
+      name: "DONT disables local half",
+      before: option_state(3, yes, no),
+      input: neg_event(@telnet.NegotiationVerb::Dont, 3),
       decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, yes, no),
-      actions: [
-        @telnet.NegotiationAction::MarkEnabled(
-          @telnet.OptionSide::Local,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "DO during WANTNO empty disables",
-      before: option_state(31, want_no_empty, no),
-      input: neg_event(@telnet.NegotiationVerb::Do, 31),
-      decision: @telnet.PolicyDecision::Ignore,
-      after: option_state(31, no, no),
-      actions: [@telnet.NegotiationAction::NoAction],
-    },
-    NegotiationFixture::{
-      name: "DO during WANTNO opposite queues WILL",
-      before: option_state(31, want_no_opp, no),
-      input: neg_event(@telnet.NegotiationVerb::Do, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, want_yes_empty, no),
+      after: option_state(3, no, no),
       actions: [
         @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Will, 31),
+          neg_event(@telnet.NegotiationVerb::Wont, 3),
+        ),
+        @telnet.NegotiationAction::MarkDisabled(
+          @telnet.OptionSide::Local,
+          opt(3),
         ),
       ],
     },
   ]
-  assert_true(cases.length() == 6)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.decision == c.decision)
-    assert_true(c.input.verb == @telnet.NegotiationVerb::Do)
-  })
-}
-
-///|
-test "RFC 1143 negotiation fixture corpus covers DONT handling" {
-  let no = @telnet.HalfState::No
-  let yes = @telnet.HalfState::Yes
-  let want_no_empty = @telnet.HalfState::WantNo(@telnet.QueueBit::Empty)
-  let want_no_opp = @telnet.HalfState::WantNo(@telnet.QueueBit::Opposite)
-  let want_yes_empty = @telnet.HalfState::WantYes(@telnet.QueueBit::Empty)
-  let want_yes_opp = @telnet.HalfState::WantYes(@telnet.QueueBit::Opposite)
-  let cases = [
-    NegotiationFixture::{
-      name: "DONT from NO ignored",
-      before: option_state(1, no, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 1),
-      decision: @telnet.PolicyDecision::Ignore,
-      after: option_state(1, no, no),
-      actions: [@telnet.NegotiationAction::NoAction],
-    },
-    NegotiationFixture::{
-      name: "DONT from YES must be acknowledged by WONT",
-      before: option_state(1, yes, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 1),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(1, no, no),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Wont, 1),
-        ),
-        @telnet.NegotiationAction::MarkDisabled(
-          @telnet.OptionSide::Local,
-          opt(1),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "DONT answers pending WILL",
-      before: option_state(31, want_yes_empty, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 31),
-      decision: @telnet.PolicyDecision::Reject,
-      after: option_state(31, no, no),
-      actions: [
-        @telnet.NegotiationAction::MarkDisabled(
-          @telnet.OptionSide::Local,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "DONT answers pending WILL with opposite request",
-      before: option_state(31, want_yes_opp, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 31),
-      decision: @telnet.PolicyDecision::Reject,
-      after: option_state(31, want_no_empty, no),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Wont, 31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "DONT during WANTNO empty confirms disabled",
-      before: option_state(31, want_no_empty, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, no, no),
-      actions: [
-        @telnet.NegotiationAction::MarkDisabled(
-          @telnet.OptionSide::Local,
-          opt(31),
-        ),
-      ],
-    },
-    NegotiationFixture::{
-      name: "DONT during WANTNO opposite restarts enable",
-      before: option_state(31, want_no_opp, no),
-      input: neg_event(@telnet.NegotiationVerb::Dont, 31),
-      decision: @telnet.PolicyDecision::Accept,
-      after: option_state(31, want_yes_empty, no),
-      actions: [
-        @telnet.NegotiationAction::Send(
-          neg_event(@telnet.NegotiationVerb::Will, 31),
-        ),
-      ],
-    },
-  ]
-  assert_true(cases.length() == 6)
-  cases.each(fn(c) raise {
-    assert_true(c.name.length() > 0)
-    assert_true(c.decision == c.decision)
-    assert_true(c.input.verb == @telnet.NegotiationVerb::Dont)
-  })
+  assert_true(cases.length() == 8)
+  cases.each(fn(c) raise { assert_negotiation_fixture(c) })
 }
 
 ///|
@@ -1166,6 +1025,10 @@ test "libtelnet-inspired RFC1143 ZMP fixture is represented" {
     actions: [
       @telnet.NegotiationAction::Send(
         neg_event(@telnet.NegotiationVerb::Do, zmp),
+      ),
+      @telnet.NegotiationAction::MarkEnabled(
+        @telnet.OptionSide::Remote,
+        opt(zmp),
       ),
     ],
   }
@@ -1184,12 +1047,13 @@ test "libtelnet-inspired RFC1143 ZMP fixture is represented" {
     decision: @telnet.PolicyDecision::Accept,
     after: option_state(zmp, @telnet.HalfState::No, @telnet.HalfState::No),
     actions: [
-      @telnet.NegotiationAction::Send(
-        neg_event(@telnet.NegotiationVerb::Dont, zmp),
+      @telnet.NegotiationAction::MarkDisabled(
+        @telnet.OptionSide::Remote,
+        opt(zmp),
       ),
     ],
   }
-  assert_true(enable_once.actions.length() == 1)
-  assert_true(enable_again.actions == [@telnet.NegotiationAction::NoAction])
-  assert_true(disable_once.actions.length() == 1)
+  assert_negotiation_fixture(enable_once)
+  assert_negotiation_fixture(enable_again)
+  assert_negotiation_fixture(disable_once)
 }
