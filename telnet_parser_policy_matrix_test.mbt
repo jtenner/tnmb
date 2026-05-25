@@ -130,6 +130,56 @@ test "parser policy coalescing capacity splits preserved fast path predictably" 
 }
 
 ///|
+test "parser policy with_config preserves checkpoint and swaps policy" {
+  let base = @telnet.Parser::default().feed(bytes([255])).parser
+  let updated = base.with_config(
+    parser_policy_config(
+      @telnet.CrPolicy::NormalizeToLf,
+      @telnet.DataCoalescing::EmitImmediately,
+      2,
+      3,
+    ),
+  )
+  assert_true(updated.checkpoint == base.checkpoint)
+  assert_true(updated.config.cr_policy == @telnet.CrPolicy::NormalizeToLf)
+  assert_true(
+    updated.config.data_coalescing == @telnet.DataCoalescing::EmitImmediately,
+  )
+  assert_true(updated.config.max_data_chunk_bytes == 2)
+  assert_true(updated.config.max_subnegotiation_bytes == 3)
+}
+
+///|
+test "parser policy raw negative subnegotiation cap discards safely" {
+  let unsafe_parser = @telnet.Parser::{
+    config: parser_policy_config(
+      @telnet.CrPolicy::Preserve,
+      @telnet.DataCoalescing::CoalesceUntilCommand,
+      4096,
+      -1,
+    ),
+    checkpoint: @telnet.ParserCheckpoint::{
+      mode: @telnet.ParserMode::Normal,
+      absolute_offset: 0,
+      buffered_data_length: 0,
+      buffered_subnegotiation_length: 0,
+    },
+    buffered_data: Bytes::new(0),
+    buffered_subnegotiation: Bytes::new(0),
+    pending_cr: false,
+    discarding_subnegotiation: false,
+  }
+  let result = unsafe_parser.feed(bytes([255, 250, 24, 65, 255, 240, 66]))
+  assert_true(
+    result.events ==
+    [
+      err(@telnet.TelnetErrorKind::SubnegotiationTooLarge, 3, Some(65)),
+      data([66]),
+    ],
+  )
+}
+
+///|
 test "parser policy checkpoint modes cover partial command families" {
   let parser = @telnet.Parser::default()
   assert_true(

@@ -197,6 +197,38 @@ test "codec matrix CHARSET request accepted rejected and TTABLE variants roundtr
 }
 
 ///|
+test "codec matrix empty CHARSET request encoding is current canonical shape" {
+  let payload = @telnet.OptionPayload::Charset(
+    @telnet.CharsetMessage::Request([]),
+  )
+  assert_true(@telnet.OptionPayload::required_capacity(payload) == 2)
+  let out = Bytes::make(3, byte(88))
+  match @telnet.OptionPayload::encode(payload, out) {
+    Ok(r) => {
+      assert_true(r.bytes_written == 2)
+      assert_true(r.required_capacity == 2)
+      assert_true(out == bytes([1, 32, 88]))
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
+test "codec matrix OptionPayload Empty encodes to zero bytes" {
+  let payload = @telnet.OptionPayload::Empty
+  assert_true(@telnet.OptionPayload::required_capacity(payload) == 0)
+  let out = Bytes::make(2, byte(88))
+  match @telnet.OptionPayload::encode(payload, out) {
+    Ok(r) => {
+      assert_true(r.bytes_written == 0)
+      assert_true(r.required_capacity == 0)
+      assert_true(out == bytes([88, 88]))
+    }
+    Err(_) => assert_true(false)
+  }
+}
+
+///|
 test "codec matrix LINEMODE modes forward masks and SLC roundtrip" {
   codec_assert_roundtrip(
     34,

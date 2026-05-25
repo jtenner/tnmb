@@ -164,6 +164,44 @@ test "malformed CHARSET requests accepted and ttable variants reject precisely" 
 }
 
 ///|
+test "malformed codec encoders report short output capacity" {
+  match
+    @telnet.TerminalTypeMessage::encode(
+      @telnet.TerminalTypeMessage::Send,
+      Bytes::new(0),
+    ) {
+    Ok(_) => assert_true(false)
+    Err(e) => {
+      assert_true(e.kind == @telnet.EncodeErrorKind::OutputBufferTooSmall)
+      assert_true(e.required_capacity == 1)
+    }
+  }
+  match
+    @telnet.EnvironmentMessage::encode(
+      @telnet.EnvironmentMessage::Send(["TERM"]),
+      Bytes::new(1),
+    ) {
+    Ok(_) => assert_true(false)
+    Err(e) => {
+      assert_true(e.kind == @telnet.EncodeErrorKind::OutputBufferTooSmall)
+      assert_true(e.required_capacity == 6)
+    }
+  }
+}
+
+///|
+test "malformed NEW-ENVIRON dangling escaped name rejects precisely" {
+  malformed_expect_error_at(
+    39,
+    [0, 0, 65, 2],
+    @telnet.TelnetErrorKind::IncompleteSubnegotiation,
+    3,
+    2,
+    39,
+  )
+}
+
+///|
 test "malformed LINEMODE empty and unknown commands reject" {
   malformed_expect_error(34, [], @telnet.TelnetErrorKind::InvalidCommandByte)
   malformed_expect_error(34, [0], @telnet.TelnetErrorKind::InvalidCommandByte)

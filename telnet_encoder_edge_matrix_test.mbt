@@ -40,10 +40,32 @@ test "encoder edge invalid spans reject without touching output" {
 }
 
 ///|
-test "encoder edge assume-capacity rejects negative required and short output" {
+test "encoder edge assume-capacity rejects invalid negative and short inputs" {
   let encoder = @telnet.Encoder::canonical()
   let out = Bytes::make(2, byte(77))
   match encoder.encode_data_assume_capacity(span([65]), out, -1) {
+    Ok(_) => assert_true(false)
+    Err(e) => {
+      assert_true(e.kind == @telnet.EncodeErrorKind::OutputBufferTooSmall)
+      assert_true(e.required_capacity == -1)
+      assert_true(out == bytes([77, 77]))
+    }
+  }
+  match
+    encoder.encode_data_assume_capacity(encoder_edge_invalid_span(), out, 1) {
+    Ok(_) => assert_true(false)
+    Err(e) => {
+      assert_true(e.kind == @telnet.EncodeErrorKind::UnsupportedEncoding)
+      assert_true(e.required_capacity == 0)
+      assert_true(out == bytes([77, 77]))
+    }
+  }
+  match
+    encoder.encode_subnegotiation_assume_capacity(
+      @telnet.SubnegotiationEvent::{ option: opt(24), payload: span([1]) },
+      out,
+      -1,
+    ) {
     Ok(_) => assert_true(false)
     Err(e) => {
       assert_true(e.kind == @telnet.EncodeErrorKind::OutputBufferTooSmall)
