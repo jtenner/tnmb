@@ -64,6 +64,8 @@ maximum generated wire length 192, and target `all`:
 
 ```sh
 moon run cmd/fuzz -- ci
+moon run --target wasm cmd/fuzz -- ci
+moon run --target wasm-gc cmd/fuzz -- ci
 ```
 
 For a reproducible custom run, pass positional arguments after `--`:
@@ -77,7 +79,8 @@ prints the selected seed, iteration count, maximum generated wire length, target
 and a final checksum. On failure it prints `target=... seed=... iteration=...
 max_length=... wire=bytes([...])` so the wire can be copied into a named
 regression test. The GitHub Actions workflow in `.github/workflows/ci.yml` runs
-`moon info`, `moon fmt --check`, `moon test`, and the CI fuzz profile.
+`moon info`, `moon fmt --check`, `moon test`, target-parity tests, and the CI
+fuzz profile on the default, wasm, and wasm-gc backends.
 
 ### Experimental native coverage-guided fuzzing
 

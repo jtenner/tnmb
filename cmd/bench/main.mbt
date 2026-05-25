@@ -10,6 +10,14 @@
 
 ///|   moon run --target native cmd/bench
 
+///|   moon build --target wasm cmd/bench
+
+///|   node tools/run-wasm-bench.mjs _build/wasm/debug/build/cmd/bench/bench.wasm
+
+///|   moon build --target wasm-gc cmd/bench
+
+///|   bun tools/run-wasm-bench.mjs _build/wasm-gc/debug/build/cmd/bench/bench.wasm
+
 ///|
 
 ///| The suite intentionally reports a simple checksum for every benchmark so
@@ -32,10 +40,14 @@ fn now_us() -> Int64 {
 extern "C" fn now_us() -> Int64 = "moonbit_telnet_bench_now_us"
 
 ///|
-#cfg(not(any(target="js", target="native")))
+#cfg(any(target="wasm", target="wasm-gc"))
+fn now_us() -> Int64 = "moonbit:bench" "now_us"
+
+///|
+#cfg(not(any(target="js", target="native", target="wasm", target="wasm-gc")))
 fn now_us() -> Int64 {
   abort(
-    "cmd/bench timing is implemented for JS and native targets: moon run --target js cmd/bench or moon run --target native cmd/bench",
+    "cmd/bench timing is implemented for JS, native, wasm, and wasm-gc targets",
   )
 }
 

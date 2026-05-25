@@ -20,6 +20,7 @@ and the IANA TELNET option registry for option-code assignments.
 
 Keep the boundary strict: `moon test` must stay deterministic and fast. Longer
 or instrumented fuzzing belongs behind explicit `moon run cmd/fuzz ...`,
+`moon run --target wasm cmd/fuzz ...`, `moon run --target wasm-gc cmd/fuzz ...`,
 `moon run --target native cmd/fuzz-native`, or external fuzzer commands.
 
 ## Properties covered by the fast suite
@@ -66,10 +67,14 @@ Run the extended deterministic CI fuzz profile used by
 
 ```sh
 moon run cmd/fuzz -- ci
+moon run --target wasm cmd/fuzz -- ci
+moon run --target wasm-gc cmd/fuzz -- ci
 ```
 
 The CI profile is intentionally bounded: seed `20260524`, 4096 iterations,
-maximum generated wire length 192, and target `all`.
+maximum generated wire length 192, and target `all`. The wasm and wasm-gc runs
+use the same profile so parser, encoder, and stability properties are checked
+against both WebAssembly backends in addition to the default target.
 
 ## Helper sharing boundaries
 

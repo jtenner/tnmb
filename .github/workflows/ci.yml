@@ -43,5 +43,11 @@ jobs:
       - name: Run CI fuzz profile
         run: moon run cmd/fuzz -- ci
 
+      - name: Run wasm CI fuzz profile
+        run: moon run --target wasm cmd/fuzz -- ci
+
+      - name: Run wasm-gc CI fuzz profile
+        run: moon run --target wasm-gc cmd/fuzz -- ci
+
       - name: Ensure generated files are committed
         run: git diff --exit-code

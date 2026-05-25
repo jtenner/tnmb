@@ -26,6 +26,10 @@ moon test
 moon run cmd/main
 moon run --target js cmd/bench
 moon run --target native cmd/bench
+moon build --target wasm cmd/bench
+node tools/run-wasm-bench.mjs _build/wasm/debug/build/cmd/bench/bench.wasm
+moon build --target wasm-gc cmd/bench
+bun tools/run-wasm-bench.mjs _build/wasm-gc/debug/build/cmd/bench/bench.wasm
 ```
 
 Use `moon test --update` only for intentional snapshot updates. Before finishing
@@ -39,10 +43,19 @@ Run from the repo root:
 ```sh
 moon run --target js cmd/bench
 moon run --target native cmd/bench
+moon build --target wasm cmd/bench
+node tools/run-wasm-bench.mjs _build/wasm/debug/build/cmd/bench/bench.wasm
+moon build --target wasm-gc cmd/bench
+bun tools/run-wasm-bench.mjs _build/wasm-gc/debug/build/cmd/bench/bench.wasm
+node tools/collect-benchmarks.mjs --runs 5 --markdown _build/bench/report.md --out _build/bench/report.json
 ```
 
 Benchmarks report elapsed ms, ops/sec, approximate MB/s, and a checksum. Native
-benchmark timing depends on `cmd/bench/time.c` via `native-stub`.
+benchmark timing depends on `cmd/bench/time.c` via `native-stub`; wasm and
+wasm-gc benchmark timing depends on `tools/run-wasm-bench.mjs` providing the
+`moonbit:bench.now_us` host import. Use `tools/collect-benchmarks.mjs` before
+publishing performance numbers; it repeats selected targets, averages every
+benchmark row, and writes markdown/JSON reports.
 
 ## Documentation rules
 

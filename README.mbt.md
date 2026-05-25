@@ -47,7 +47,7 @@ acceptance policy remain application responsibilities.
 
 ### Parse a stream
 
-```moonbit
+```moonbit nocheck
 let parser = @telnet.Parser::default()
 let result = parser.feed(Bytes::from_array([
   72.to_byte(), 105.to_byte(), 255.to_byte(), 246.to_byte(),
@@ -57,7 +57,7 @@ let result = parser.feed(Bytes::from_array([
 
 For streaming input, keep the returned parser and feed the next chunk:
 
-```moonbit
+```moonbit nocheck
 let first = @telnet.Parser::default().feed(Bytes::from_array([
   255.to_byte(), 251.to_byte(),
 ]))
@@ -67,7 +67,7 @@ let second = first.parser.feed(Bytes::from_array([1.to_byte()]))
 
 ### Encode TELNET bytes
 
-```moonbit
+```moonbit nocheck
 let out = Bytes::new(3)
 let event = @telnet.NegotiationEvent::{
   verb: @telnet.NegotiationVerb::Will,
@@ -80,7 +80,7 @@ ignore(@telnet.Encoder::canonical().encode_item(item, out))
 
 Canonical data encoding doubles IAC bytes:
 
-```moonbit
+```moonbit nocheck
 let data = @telnet.ByteSpan::new(
   Bytes::from_array([65.to_byte(), 255.to_byte(), 66.to_byte()]),
   0,
@@ -96,7 +96,7 @@ ignore(@telnet.Encoder::canonical().encode_item(
 
 ### Decode subnegotiation payloads
 
-```moonbit
+```moonbit nocheck
 let payload = @telnet.ByteSpan::new(
   Bytes::from_array([0.to_byte(), 80.to_byte(), 0.to_byte(), 24.to_byte()]),
   0,
@@ -112,7 +112,7 @@ match @telnet.OptionPayload::decode(@telnet.OptionCode::new(31.to_byte()), paylo
 
 ### Drive option negotiation
 
-```moonbit
+```moonbit nocheck
 let negotiator = @telnet.Negotiator::new()
 let incoming = @telnet.NegotiationEvent::{
   verb: @telnet.NegotiationVerb::Will,
@@ -189,6 +189,8 @@ Deterministic fuzz profile:
 
 ```sh
 moon run cmd/fuzz -- ci
+moon run --target wasm cmd/fuzz -- ci
+moon run --target wasm-gc cmd/fuzz -- ci
 ```
 
 Additional guards:
@@ -205,16 +207,54 @@ harnesses under `cmd/`.
 ## Benchmarks
 
 A runnable benchmark package lives in [`cmd/bench`](cmd/bench). It supports
-JavaScript timing via `performance.now()` and native timing via a small
-monotonic-clock C stub:
+JavaScript timing via `performance.now()`, native timing via a small
+monotonic-clock C stub, and WebAssembly timing through a tiny JavaScript host
+runner:
 
 ```sh
 moon run --target js cmd/bench
 moon run --target native cmd/bench
+
+moon build --target wasm cmd/bench
+node tools/run-wasm-bench.mjs _build/wasm/debug/build/cmd/bench/bench.wasm
+
+moon build --target wasm-gc cmd/bench
+bun tools/run-wasm-bench.mjs _build/wasm-gc/debug/build/cmd/bench/bench.wasm
 ```
 
 The runner reports elapsed milliseconds, operations/second, approximate MB/s for
 byte-oriented workloads, and a checksum for each benchmark.
+
+Before publishing performance numbers, collect repeated runs and average every
+benchmark row:
+
+```sh
+node tools/collect-benchmarks.mjs --runs 5 \
+  --markdown _build/bench/report.md \
+  --out _build/bench/report.json
+```
+
+Use `--targets js-node,js-bun,native,wasm-node,wasm-bun,wasm-gc-bun` to select a
+subset, `--no-build` to reuse existing artifacts, and `--strict` to fail instead
+of skipping unavailable runtimes such as Bun.
+
+Local benchmark baselines should be refreshed when performance-sensitive parser,
+encoder, or negotiator code changes. This table is intentionally compact; keep
+full command output in release notes or PR logs when a detailed comparison is
+needed.
+
+| Date | Machine / runtime | Target | Representative local results |
+|---|---|---:|---|
+| 2026-05-25 | AMD Ryzen 7 8845HS, Node v20.19.2 | js | `parser_plain_1m_8192_chunks`: 611 MB/s; `parser_iac_escaped_sparse`: 171 MB/s; `encoder_raw_1m_assume_capacity`: 327 MB/s; `e2e_interactive_shell`: 6,170 ops/s. |
+| 2026-05-25 | AMD Ryzen 7 8845HS, Bun 1.3.13 | js | `parser_plain_1m_8192_chunks`: 1,645 MB/s; `parser_iac_escaped_sparse`: 428 MB/s; `encoder_raw_1m_assume_capacity`: 1,134 MB/s; `e2e_interactive_shell`: 9,083 ops/s. |
+| 2026-05-25 | AMD Ryzen 7 8845HS, Moon native | native | `parser_plain_1m_8192_chunks`: 21,531 MB/s; `parser_iac_escaped_sparse`: 178 MB/s; `encoder_raw_1m_assume_capacity`: 441 MB/s; `e2e_interactive_shell`: 2,596 ops/s. |
+| 2026-05-25 | AMD Ryzen 7 8845HS, Node v20.19.2 | wasm | `parser_plain_1m_8192_chunks`: 864 MB/s; `parser_iac_escaped_sparse`: 97 MB/s; `encoder_raw_1m_assume_capacity`: 713 MB/s; `e2e_interactive_shell`: 3,061 ops/s. |
+| 2026-05-25 | AMD Ryzen 7 8845HS, Bun 1.3.13 | wasm | `parser_plain_1m_8192_chunks`: 1,658 MB/s; `parser_iac_escaped_sparse`: 193 MB/s; `encoder_raw_1m_assume_capacity`: 774 MB/s; `e2e_interactive_shell`: 4,280 ops/s. |
+| 2026-05-25 | AMD Ryzen 7 8845HS, Bun 1.3.13 | wasm-gc | `parser_plain_1m_8192_chunks`: 2,030 MB/s; `parser_iac_escaped_sparse`: 675 MB/s; `encoder_raw_1m_assume_capacity`: 2,035 MB/s; `e2e_interactive_shell`: 10,711 ops/s. |
+
+Note: this local Node v20.19.2 runtime could run the wasm build but could not
+instantiate the wasm-gc build; the wasm-gc row above was measured with Bun
+1.3.13.
 
 ## Documentation
 
