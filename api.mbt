@@ -1987,11 +1987,37 @@ pub fn CharsetMessage::decode(
       Ok(CharsetMessage::Request(xs))
     }
     2 =>
-      match span_ascii_string(payload, 1, payload.length - 1) {
-        Ok(s) => Ok(CharsetMessage::Accepted(s))
-        Err(e) => Err(e)
+      if payload.length == 1 {
+        Err(TelnetError::{
+          kind: TelnetErrorKind::PolicyRejected,
+          offset: 0,
+          byte: Some(payload.bytes[payload.start]),
+          option: Some(OptionCode::{ value: b(42) }),
+        })
+      } else {
+        match span_ascii_string(payload, 1, payload.length - 1) {
+          Ok(s) => Ok(CharsetMessage::Accepted(s))
+          Err(e) => Err(e)
+        }
       }
     3 => Ok(CharsetMessage::Rejected)
+    4 =>
+      if payload.length == 1 {
+        Err(TelnetError::{
+          kind: TelnetErrorKind::PolicyRejected,
+          offset: 0,
+          byte: Some(payload.bytes[payload.start]),
+          option: Some(OptionCode::{ value: b(42) }),
+        })
+      } else {
+        match span_ascii_string(payload, 1, payload.length - 1) {
+          Ok(s) => Ok(CharsetMessage::TTableIs(s))
+          Err(e) => Err(e)
+        }
+      }
+    5 => Ok(CharsetMessage::TTableRejected)
+    6 => Ok(CharsetMessage::TTableAck)
+    7 => Ok(CharsetMessage::TTableNak)
     _ =>
       Err(TelnetError::{
         kind: TelnetErrorKind::InvalidCommandByte,

@@ -34,6 +34,12 @@ jobs:
       - name: Run tests
         run: moon test
 
+      - name: Run JS target tests
+        run: moon test --target js
+
+      - name: Run native target tests
+        run: moon test --target native
+
       - name: Run CI fuzz profile
         run: moon run cmd/fuzz -- ci
 

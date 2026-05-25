@@ -308,10 +308,16 @@ test "TDD encoder accepts and rejects the exhaustive simple command set" {
     @telnet.Command::IAC,
   ]
   rejected.each(fn(command) raise {
-    match encoder.encode_command(command, missing_output(4, 18)) {
+    let out = missing_output(4, 18)
+    match encoder.encode_command(command, out) {
       Ok(_) => assert_true(false)
-      Err(e) =>
+      Err(e) => {
         assert_true(e.kind == @telnet.EncodeErrorKind::UnsupportedEncoding)
+        assert_true(out[0] == byte(18))
+        assert_true(out[1] == byte(18))
+        assert_true(out[2] == byte(18))
+        assert_true(out[3] == byte(18))
+      }
     }
   })
 }
